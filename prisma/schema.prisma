@@ -1,0 +1,63 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+/// A single job posting scraped from a job site.
+model Job {
+  id          Int      @id @default(autoincrement())
+  site        JobSite
+  siteJobId   String   @map("site_job_id") @db.VarChar(191)
+  title       String   @db.VarChar(512)
+  description String   @db.LongText
+  jobUrl      String   @map("job_url") @db.VarChar(1024)
+  applyUrl    String?  @map("apply_url") @db.VarChar(2048)
+  company     String?  @db.VarChar(255)
+  companyUrl  String?  @map("company_url") @db.VarChar(1024)
+  jobType     String?  @map("job_type") @db.VarChar(64)
+  remote      Boolean  @default(false)
+  location    String?  @db.VarChar(255)
+  postedAt    DateTime? @map("posted_at")
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([site, siteJobId], name: "site_siteJobId")
+  @@index([site])
+  @@map("jobs")
+}
+
+enum JobSite {
+  indeed
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique @db.VarChar(255)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  role         Role     @default(guest)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("users")
+}
+
+enum Role {
+  super_admin
+  admin
+  bidder
+  guest
+}
+
+/// A word to emphasize in job descriptions (managed by admins). The unique
+/// constraint is case-insensitive via the utf8mb4_unicode_ci collation.
+model Keyword {
+  id        Int      @id @default(autoincrement())
+  word      String   @unique @db.VarChar(128)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("keywords")
+}

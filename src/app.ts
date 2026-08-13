@@ -1,0 +1,30 @@
+import express, { type Application, type Request, type Response } from 'express';
+import cors from 'cors';
+import { env } from './config/env';
+import { jobRouter } from './routes/job.routes';
+import { authRouter } from './routes/auth.routes';
+import { keywordRouter } from './routes/keyword.routes';
+import { requireAuth } from './middleware/auth.middleware';
+import { notFound, errorHandler } from './middleware/error.middleware';
+
+/** Build the Express application (no listening — kept testable/importable). */
+export function createApp(): Application {
+  const app = express();
+
+  app.use(cors({ origin: env.CORS_ORIGIN }));
+  app.use(express.json());
+
+  app.get('/health', (_req: Request, res: Response) => {
+    res.json({ status: 'ok', service: 'jobhighlander-backend' });
+  });
+
+  app.use('/api/auth', authRouter);
+  // Job data requires a valid session (the Next.js server forwards the JWT).
+  app.use('/api/jobs', requireAuth, jobRouter);
+  app.use('/api/keywords', keywordRouter);
+
+  app.use(notFound);
+  app.use(errorHandler);
+
+  return app;
+}
