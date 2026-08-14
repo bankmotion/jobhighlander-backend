@@ -4,7 +4,10 @@ import { prisma } from '../lib/prisma';
 const JOB_SITES = new Set<string>(Object.values(JobSite));
 
 export interface ListJobsParams {
-  site?: string;
+  /** Filter to these sites (OR). Empty/undefined = all sites. */
+  sites?: string[];
+  /** When true, only remote jobs. */
+  remote?: boolean;
   location?: string;
   /** Free-text search across title/description/location. */
   q?: string;
@@ -17,11 +20,12 @@ export interface ListJobsParams {
  */
 export const jobService = {
   async list(params: ListJobsParams) {
-    const { site, location, q, page, pageSize } = params;
+    const { sites, remote, location, q, page, pageSize } = params;
 
-    const validSite = site && JOB_SITES.has(site) ? (site as JobSite) : undefined;
+    const validSites = (sites ?? []).filter((s) => JOB_SITES.has(s)) as JobSite[];
     const where: Prisma.JobWhereInput = {
-      ...(validSite ? { site: validSite } : {}),
+      ...(validSites.length ? { site: { in: validSites } } : {}),
+      ...(remote ? { remote: true } : {}),
       ...(location ? { location: { contains: location } } : {}),
       ...(q
         ? {

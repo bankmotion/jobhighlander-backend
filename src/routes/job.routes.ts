@@ -5,8 +5,16 @@ import { jobService } from '../services/job.service';
 export const jobRouter = Router();
 
 const listQuerySchema = z.object({
-  site: z.string().trim().min(1).optional(),
+  // `site` may repeat (?site=indeed&site=glassdoor) → array, or be a single value.
+  site: z
+    .preprocess(
+      (v) => (v === undefined ? undefined : Array.isArray(v) ? v : [v]),
+      z.array(z.string().trim().min(1)),
+    )
+    .optional(),
   location: z.string().trim().min(1).optional(),
+  // '1'/'true' → remote-only. Absent → no remote filter.
+  remote: z.string().optional(),
   q: z.string().trim().min(1).optional(),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(20),
@@ -19,7 +27,12 @@ jobRouter.get('/', async (req: Request, res: Response, next: NextFunction) => {
     if (!parsed.success) {
       return res.status(400).json({ error: 'Invalid query', details: parsed.error.flatten() });
     }
-    const result = await jobService.list(parsed.data);
+    const { site, remote, ...rest } = parsed.data;
+    const result = await jobService.list({
+      ...rest,
+      sites: site,
+      remote: remote === '1' || remote === 'true',
+    });
     res.json(result);
   } catch (err) {
     next(err);

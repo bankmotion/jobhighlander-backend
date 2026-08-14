@@ -21,6 +21,7 @@ model Job {
   jobType     String?  @map("job_type") @db.VarChar(64)
   remote      Boolean  @default(false)
   location    String?  @db.VarChar(255)
+  salary      String?  @db.VarChar(255)
   postedAt    DateTime? @map("posted_at")
 
   createdAt   DateTime @default(now()) @map("created_at")
@@ -33,6 +34,8 @@ model Job {
 
 enum JobSite {
   indeed
+  glassdoor
+  jobright
 }
 
 model User {
@@ -41,6 +44,8 @@ model User {
   passwordHash String   @map("password_hash") @db.VarChar(255)
   role         Role     @default(guest)
   createdAt    DateTime @default(now()) @map("created_at")
+
+  profiles     Profile[]
 
   @@map("users")
 }
@@ -60,4 +65,62 @@ model Keyword {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("keywords")
+}
+
+/// A candidate/bidding profile, owned by an admin. Holds personal info plus
+/// repeatable work experience and education entries.
+model Profile {
+  id        Int      @id @default(autoincrement())
+  ownerId   Int      @map("owner_id")
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  email     String?  @db.VarChar(255)
+  firstName String?  @map("first_name") @db.VarChar(120)
+  lastName  String?  @map("last_name") @db.VarChar(120)
+  phone     String?  @db.VarChar(60)
+  linkedin  String?  @db.VarChar(512)
+  location  String?  @db.VarChar(255)
+
+  workExperiences WorkExperience[]
+  educations      Education[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([ownerId])
+  @@map("profiles")
+}
+
+/// One work-experience entry on a profile. `endDate` null = "Present".
+/// Dates are month-granularity (stored as the 1st of the month, no timezone).
+model WorkExperience {
+  id        Int      @id @default(autoincrement())
+  profileId Int      @map("profile_id")
+  profile   Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  company   String?  @db.VarChar(255)
+  location  String?  @db.VarChar(255)
+  startDate DateTime? @map("start_date") @db.Date
+  endDate   DateTime? @map("end_date") @db.Date
+  sortOrder Int      @default(0) @map("sort_order")
+
+  @@index([profileId])
+  @@map("work_experiences")
+}
+
+/// One education entry on a profile. `endDate` null = "Present".
+model Education {
+  id         Int      @id @default(autoincrement())
+  profileId  Int      @map("profile_id")
+  profile    Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  university String?  @db.VarChar(255)
+  location   String?  @db.VarChar(255)
+  degree     String?  @db.VarChar(255)
+  startDate  DateTime? @map("start_date") @db.Date
+  endDate    DateTime? @map("end_date") @db.Date
+  sortOrder  Int      @default(0) @map("sort_order")
+
+  @@index([profileId])
+  @@map("educations")
 }
