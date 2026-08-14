@@ -4,6 +4,7 @@ import { env } from './config/env';
 import { jobRouter } from './routes/job.routes';
 import { authRouter } from './routes/auth.routes';
 import { keywordRouter } from './routes/keyword.routes';
+import { profileRouter } from './routes/profile.routes';
 import { requireAuth } from './middleware/auth.middleware';
 import { notFound, errorHandler } from './middleware/error.middleware';
 
@@ -22,6 +23,7 @@ export function createApp(): Application {
   // Job data requires a valid session (the Next.js server forwards the JWT).
   app.use('/api/jobs', requireAuth, jobRouter);
   app.use('/api/keywords', keywordRouter);
+  app.use('/api/profiles', profileRouter);
 
   app.use(notFound);
   app.use(errorHandler);
