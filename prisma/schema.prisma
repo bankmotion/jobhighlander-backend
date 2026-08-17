@@ -58,6 +58,27 @@ model ScrapeRun {
   @@map("scrape_runs")
 }
 
+/// Scraper configuration, editable by super-admins (search/filter URLs, enable
+/// flags, limits…). The Python scrapers read these and override their .env
+/// defaults at startup. Simple key/value so new settings need no migration.
+model ScraperSetting {
+  key       String   @id @db.VarChar(120)
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("scraper_settings")
+}
+
+/// Persisted browser session cookies per site (google/indeed/glassdoor/…),
+/// replacing the local sessions/*.json files so sessions live in the DB.
+model ScraperSession {
+  site      String   @id @db.VarChar(64)
+  cookies   String   @db.LongText // JSON array of cookies
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("scraper_sessions")
+}
+
 model User {
   id           Int      @id @default(autoincrement())
   email        String   @unique @db.VarChar(255)

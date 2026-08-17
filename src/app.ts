@@ -6,6 +6,7 @@ import { authRouter } from './routes/auth.routes';
 import { keywordRouter } from './routes/keyword.routes';
 import { profileRouter } from './routes/profile.routes';
 import { scrapeRunRouter } from './routes/scrapeRun.routes';
+import { scraperSettingRouter } from './routes/scraperSetting.routes';
 import { requireAuth } from './middleware/auth.middleware';
 import { notFound, errorHandler } from './middleware/error.middleware';
 
@@ -26,6 +27,7 @@ export function createApp(): Application {
   app.use('/api/keywords', keywordRouter);
   app.use('/api/profiles', profileRouter);
   app.use('/api/scrape-runs', scrapeRunRouter);
+  app.use('/api/scraper-settings', scraperSettingRouter);
 
   app.use(notFound);
   app.use(errorHandler);
