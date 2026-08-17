@@ -74,6 +74,19 @@ export const authService = {
     return prisma.user.findMany({ orderBy: { createdAt: 'asc' }, select: PUBLIC_USER });
   },
 
+  /**
+   * Current identity + role straight from the DB. Used to authorize every
+   * request so a role change takes effect immediately, rather than being
+   * trusted from the (possibly stale) JWT. Returns null if the user is gone.
+   */
+  async getAuthUser(id: number): Promise<{ id: number; email: string; role: Role } | null> {
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: { id: true, email: true, role: true },
+    });
+    return user ? { id: user.id, email: user.email, role: user.role as Role } : null;
+  },
+
   /** Approve/assign a user's role. Authorization is enforced in the route. */
   setRole(id: number, role: Role) {
     return prisma.user.update({ where: { id }, data: { role }, select: PUBLIC_USER });

@@ -36,6 +36,7 @@ enum JobSite {
   indeed
   glassdoor
   jobright
+  weworkremotely
 }
 
 model User {
