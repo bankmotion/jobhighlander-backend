@@ -39,6 +39,25 @@ enum JobSite {
   weworkremotely
 }
 
+/// One scraper run — logged by the Python scrapers so super-admins can see when
+/// each site last scraped, how long it took, and how many jobs it found.
+model ScrapeRun {
+  id         Int       @id @default(autoincrement())
+  site       String    @db.VarChar(64) // indeed | glassdoor | jobright | weworkremotely | all
+  status     String    @default("running") @db.VarChar(20) // running | success | failed
+  startedAt  DateTime  @default(now()) @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+  inserted   Int       @default(0)
+  updated    Int       @default(0)
+  unchanged  Int       @default(0)
+  skipped    Int       @default(0)
+  error      String?   @db.Text
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([startedAt])
+  @@map("scrape_runs")
+}
+
 model User {
   id           Int      @id @default(autoincrement())
   email        String   @unique @db.VarChar(255)

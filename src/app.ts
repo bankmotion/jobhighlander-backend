@@ -5,6 +5,7 @@ import { jobRouter } from './routes/job.routes';
 import { authRouter } from './routes/auth.routes';
 import { keywordRouter } from './routes/keyword.routes';
 import { profileRouter } from './routes/profile.routes';
+import { scrapeRunRouter } from './routes/scrapeRun.routes';
 import { requireAuth } from './middleware/auth.middleware';
 import { notFound, errorHandler } from './middleware/error.middleware';
 
@@ -24,6 +25,7 @@ export function createApp(): Application {
   app.use('/api/jobs', requireAuth, jobRouter);
   app.use('/api/keywords', keywordRouter);
   app.use('/api/profiles', profileRouter);
+  app.use('/api/scrape-runs', scrapeRunRouter);
 
   app.use(notFound);
   app.use(errorHandler);
