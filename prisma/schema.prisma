@@ -38,6 +38,7 @@ enum JobSite {
   jobright
   weworkremotely
   himalayas
+  findmyremote
 }
 
 /// One scraper run — logged by the Python scrapers so super-admins can see when
