@@ -37,6 +37,7 @@ enum JobSite {
   glassdoor
   jobright
   weworkremotely
+  himalayas
 }
 
 /// One scraper run — logged by the Python scrapers so super-admins can see when
