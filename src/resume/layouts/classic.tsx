@@ -24,7 +24,7 @@ export interface TemplateProps {
  *    "Email" silently deletes that field from the parsed document.
  *  - Standard section headings, spelled out, so a parser can find them.
  */
-export function ClassicAts({ resume, name, contact }: TemplateProps) {
+export function ClassicLayout({ resume, name, contact }: TemplateProps) {
   return (
     <div className="page">
       <header>
@@ -99,7 +99,7 @@ export function ClassicAts({ resume, name, contact }: TemplateProps) {
  * with `setContent`, so there is no server to fetch a stylesheet from, and a
  * silent 404 would produce an unstyled resume that still looks like a PDF.
  */
-export const CLASSIC_ATS_CSS = `
+export const CLASSIC_CSS = `
   @page { size: {{PAGE}}; margin: 0; }
 
   * { box-sizing: border-box; }
@@ -107,9 +107,9 @@ export const CLASSIC_ATS_CSS = `
   html, body { margin: 0; padding: 0; background: #fff; }
 
   body {
-    font-family: Georgia, "Times New Roman", serif;
-    font-size: 10.5pt;
-    line-height: 1.4;
+    font-family: var(--font-body);
+    font-size: var(--size-body);
+    line-height: var(--line-height);
     color: #111;
     /* letter-spacing is deliberately never set anywhere in this file. */
   }
@@ -117,12 +117,13 @@ export const CLASSIC_ATS_CSS = `
   .page {
     width: {{WIDTH}}px;
     min-height: {{HEIGHT}}px;
-    padding: 54px 60px;
+    padding: var(--pad);
   }
 
   header { margin-bottom: 14px; }
 
   h1 {
+    font-family: var(--font-display);
     font-size: 20pt;
     margin: 0 0 4px;
     font-weight: 700;
@@ -132,22 +133,24 @@ export const CLASSIC_ATS_CSS = `
   .contact { color: #333; }
   .headline { margin-top: 3px; font-style: italic; }
 
-  section { margin-top: 14px; }
+  section { margin-top: var(--section-gap); }
 
   h2 {
+    font-family: var(--font-display);
+    color: var(--accent);
     font-size: 11pt;
     font-weight: 700;
     text-transform: uppercase;
     margin: 0 0 6px;
     padding-bottom: 2px;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid var(--accent);
   }
 
   section > p { margin: 0; }
 
   /* Keep a role and its bullets on one page. Splitting an entry across a page
      break is the single most common way a resume reads as broken. */
-  .entry { margin-bottom: 10px; break-inside: avoid; page-break-inside: avoid; }
+  .entry { margin-bottom: var(--entry-gap); break-inside: avoid; page-break-inside: avoid; }
   .entry:last-child { margin-bottom: 0; }
 
   .entry-head {

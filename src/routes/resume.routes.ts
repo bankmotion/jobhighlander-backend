@@ -8,7 +8,7 @@ import { prisma } from '../lib/prisma';
 import { tailoredResumeSchema } from '../schemas/resume.schema';
 import { renderResumeHtml } from '../resume/render';
 import { htmlToPdf } from '../resume/pdf';
-import { TEMPLATES } from '../resume/templates/registry';
+import { presetService, PARAMETER_SPACE } from '../services/preset.service';
 import { logger } from '../services/logger.service';
 
 export const resumeRouter = Router();
@@ -40,11 +40,33 @@ resumeRouter.post('/preview', requireAuth, async (req: AuthedRequest, res: Respo
   }
 });
 
-/** GET /api/resumes/templates — what the picker can offer. */
-resumeRouter.get('/templates', requireAuth, (_req: AuthedRequest, res: Response) => {
-  res.json(
-    Object.values(TEMPLATES).map((t) => ({ key: t.key, name: t.name, atsSafe: t.atsSafe })),
-  );
+/** GET /api/resumes/templates — everything the picker can offer. */
+resumeRouter.get('/templates', requireAuth, async (_req: AuthedRequest, res: Response, next: NextFunction) => {
+  try {
+    res.json({ presets: await presetService.list(), parameterSpace: PARAMETER_SPACE });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const setDefaultSchema = zod.object({
+  profileId: zod.coerce.number().int().positive(),
+  templateKey: zod.string().trim().min(1).max(64),
+});
+
+/** POST /api/resumes/templates/default — set a profile's default preset. */
+resumeRouter.post('/templates/default', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
+  try {
+    const parsed = setDefaultSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid request' });
+    const ok = await presetService.setDefault(parsed.data.profileId, req.user!.id, parsed.data.templateKey);
+    // Either the profile is not yours or the preset does not exist; both are a
+    // 404 so the endpoint never confirms which.
+    if (!ok) return res.status(404).json({ error: 'Profile or template not found' });
+    res.json({ ok: true, templateKey: parsed.data.templateKey });
+  } catch (err) {
+    next(err);
+  }
 });
 
 const savedQuerySchema = zod.object({
@@ -109,7 +131,12 @@ resumeRouter.post('/pdf', requireAuth, async (req: AuthedRequest, res: Response,
     });
     if (!profile) return res.status(404).json({ error: 'Profile not found' });
     const { name, contact } = profileIdentity(profile);
-    const html = renderResumeHtml({ resume: resume.data, name, contact, templateKey, pageSize });
+    // An explicit key wins (the picker previewing a choice); otherwise the
+    // profile's saved default; otherwise the built-in fallback.
+    const preset = templateKey
+      ? await presetService.get(templateKey)
+      : await presetService.forProfile(profileId, req.user!.id);
+    const html = renderResumeHtml({ resume: resume.data, name, contact, preset, pageSize });
     const { pdf, cached, ms } = await htmlToPdf(html, pageSize);
 
     logger.info('Resume PDF rendered', { bytes: pdf.length, cached, ms, templateKey, pageSize });

@@ -1,5 +1,8 @@
 import type { ComponentType } from 'react';
-import { ClassicAts, CLASSIC_ATS_CSS, type TemplateProps } from './classic-ats';
+import { ClassicLayout, CLASSIC_CSS } from '../layouts/classic';
+import type { TemplateProps } from '../layouts/classic';
+
+export type { TemplateProps };
 
 export type PageSize = 'letter' | 'a4';
 
@@ -9,32 +12,46 @@ export const PAGE_PX: Record<PageSize, { width: number; height: number; css: str
   a4: { width: 794, height: 1123, css: 'A4' }, //         210 x 297 mm
 };
 
-export interface ResumeTemplate {
+/**
+ * The compiled layouts. This map is the whole reason preset rows are safe to
+ * store: a preset names a layout by KEY, and anything not in this map falls
+ * back to the default. A database row can never introduce a new renderer.
+ */
+export const LAYOUTS = {
+  classic: { name: 'Classic', Component: ClassicLayout, css: CLASSIC_CSS },
+} satisfies Record<string, { name: string; Component: ComponentType<TemplateProps>; css: string }>;
+
+export type LayoutKey = keyof typeof LAYOUTS;
+export const DEFAULT_LAYOUT: LayoutKey = 'classic';
+
+export function getLayout(key: string | null | undefined) {
+  return LAYOUTS[(key ?? '') as LayoutKey] ?? LAYOUTS[DEFAULT_LAYOUT];
+}
+
+/** Shape a preset takes once resolved, whether it came from the DB or the seed. */
+export interface Preset {
   key: string;
   name: string;
-  /**
-   * Whether the layout survives applicant-tracking-system text extraction.
-   * Measured, not claimed — and never presented to a user as a guarantee,
-   * since real ATS stacks use several parsers that disagree with each other.
-   */
+  category: string;
+  layout: string;
+  accent: string;
+  fontPair: string;
+  density: string;
   atsSafe: boolean;
-  Component: ComponentType<TemplateProps>;
-  css: string;
 }
 
-export const TEMPLATES = {
-  'classic-ats': {
-    key: 'classic-ats',
-    name: 'Classic ATS',
-    atsSafe: true,
-    Component: ClassicAts,
-    css: CLASSIC_ATS_CSS,
-  },
-} satisfies Record<string, ResumeTemplate>;
-
-export type TemplateKey = keyof typeof TEMPLATES;
-export const DEFAULT_TEMPLATE: TemplateKey = 'classic-ats';
-
-export function getTemplate(key: string | undefined): ResumeTemplate {
-  return TEMPLATES[(key ?? DEFAULT_TEMPLATE) as TemplateKey] ?? TEMPLATES[DEFAULT_TEMPLATE];
-}
+/**
+ * Fallback used when the presets table is empty or a referenced key is gone.
+ * Keeping one in code means a fresh clone renders before it is seeded, and a
+ * deleted row never leaves a profile unable to produce a resume.
+ */
+export const FALLBACK_PRESET: Preset = {
+  key: 'classic-ink',
+  name: 'Classic Ink',
+  category: 'classic',
+  layout: 'classic',
+  accent: '#111111',
+  fontPair: 'serif-classic',
+  density: 'regular',
+  atsSafe: true,
+};

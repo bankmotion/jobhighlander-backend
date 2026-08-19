@@ -176,6 +176,11 @@ model Profile {
   linkedin  String? @db.VarChar(512)
   location  String? @db.VarChar(255)
 
+  /// Which template preset this profile's resumes render with. A plain key,
+  /// not a relation: an archived or renamed preset must degrade to the default
+  /// rather than break every resume that referenced it.
+  defaultTemplateKey String? @map("default_template_key") @db.VarChar(64)
+
   workExperiences WorkExperience[]
   educations      Education[]
   resumes         Resume[]
@@ -261,4 +266,41 @@ model Resume {
   @@unique([profileId, jobId])
   @@index([jobId])
   @@map("resumes")
+}
+
+/// A named, admin-curatable combination of the render parameters.
+///
+/// PRESETS ARE DATA; LAYOUTS ARE CODE. `layout` and `fontPair` are keys into
+/// maps compiled into the app, never code themselves — storing renderable code
+/// in a column would mean executing database content in the Node process, with
+/// full access to env vars, the filesystem and the network.
+///
+/// Unknown values degrade to the defaults at render time, so a bad row makes a
+/// resume look wrong rather than making the server crash or leak.
+model TemplatePreset {
+  id        Int     @id @default(autoincrement())
+  key       String  @unique @db.VarChar(64)
+  name      String  @db.VarChar(120)
+  /// classic | modern | professional | creative
+  category  String  @db.VarChar(32)
+  /// Which compiled layout component renders it.
+  layout    String  @db.VarChar(32)
+  /// CSS colour for the accent, e.g. "#1f5f5b". Applied as a custom property —
+  /// Tailwind v4 scans source statically, so a dynamic utility class would
+  /// compile to nothing and silently ship an unstyled resume.
+  accent    String  @default("#111111") @db.VarChar(16)
+  /// Key into the compiled font-pair map.
+  fontPair  String  @default("serif-classic") @db.VarChar(32)
+  /// compact | regular | airy
+  density   String  @default("regular") @db.VarChar(16)
+  /// Measured, not claimed — and never shown to a user as a guarantee.
+  atsSafe   Boolean @default(true) @map("ats_safe")
+  sortOrder Int     @default(0) @map("sort_order")
+  archived  Boolean @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([category, sortOrder])
+  @@map("template_presets")
 }
