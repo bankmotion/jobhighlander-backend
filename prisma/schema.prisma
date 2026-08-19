@@ -40,6 +40,7 @@ enum JobSite {
   himalayas
   findmyremote
   jobicy
+  themuse
 }
 
 /// One scraper run — logged by the Python scrapers so super-admins can see when
