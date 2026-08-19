@@ -15,7 +15,13 @@ const schema = z.object({
   // Optional on purpose: the app boots fine without AI configured. The
   // Anthropic client throws a clear error on first use instead, so a missing
   // key never blocks the scraper/job/auth routes from starting.
-  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  // `ANTHROPIC_API_KEY=` with no value parses as '' rather than undefined, so
+  // blank is normalised away first — otherwise an unset-but-present key would
+  // fail .min(1) and stop the whole server from booting.
+  ANTHROPIC_API_KEY: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    z.string().min(1).optional(),
+  ),
 });
 
 const parsed = schema.safeParse(process.env);
