@@ -9,23 +9,23 @@ datasource db {
 
 /// A single job posting scraped from a job site.
 model Job {
-  id          Int      @id @default(autoincrement())
+  id          Int       @id @default(autoincrement())
   site        JobSite
-  siteJobId   String   @map("site_job_id") @db.VarChar(191)
-  title       String   @db.VarChar(512)
-  description String   @db.LongText
-  jobUrl      String   @map("job_url") @db.VarChar(1024)
-  applyUrl    String?  @map("apply_url") @db.VarChar(2048)
-  company     String?  @db.VarChar(255)
-  companyUrl  String?  @map("company_url") @db.VarChar(1024)
-  jobType     String?  @map("job_type") @db.VarChar(64)
-  remote      Boolean  @default(false)
-  location    String?  @db.VarChar(255)
-  salary      String?  @db.VarChar(255)
+  siteJobId   String    @map("site_job_id") @db.VarChar(191)
+  title       String    @db.VarChar(512)
+  description String    @db.LongText
+  jobUrl      String    @map("job_url") @db.VarChar(1024)
+  applyUrl    String?   @map("apply_url") @db.VarChar(2048)
+  company     String?   @db.VarChar(255)
+  companyUrl  String?   @map("company_url") @db.VarChar(1024)
+  jobType     String?   @map("job_type") @db.VarChar(64)
+  remote      Boolean   @default(false)
+  location    String?   @db.VarChar(255)
+  salary      String?   @db.VarChar(255)
   postedAt    DateTime? @map("posted_at")
 
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([site, siteJobId], name: "site_siteJobId")
   @@index([site])
@@ -37,6 +37,54 @@ enum JobSite {
   glassdoor
   jobright
   weworkremotely
+  himalayas
+  findmyremote
+  jobicy
+  themuse
+}
+
+/// The scrapers' staging table. Structurally a copy of `jobs`, written by
+/// job-seeking/scraper/db.py when a scraper sets `table = "jobs_temp"` (today:
+/// scraper/remoteok.py, "Promote to jobs once verified"). Modelled here ONLY so
+/// `prisma migrate diff` reports zero drift and `prisma migrate dev` stays
+/// usable — the backend never reads or writes it.
+///
+/// Index names are mapped to the ones the live table actually carries: it was
+/// created as a copy of `jobs`, so they are `jobs_site_*`, not `jobs_temp_*`.
+model JobTemp {
+  id          Int         @id @default(autoincrement())
+  site        JobSiteTemp
+  siteJobId   String      @map("site_job_id") @db.VarChar(191)
+  title       String      @db.VarChar(512)
+  description String      @db.LongText
+  jobUrl      String      @map("job_url") @db.VarChar(1024)
+  applyUrl    String?     @map("apply_url") @db.VarChar(2048)
+  company     String?     @db.VarChar(255)
+  companyUrl  String?     @map("company_url") @db.VarChar(1024)
+  jobType     String?     @map("job_type") @db.VarChar(64)
+  remote      Boolean     @default(false)
+  location    String?     @db.VarChar(255)
+  salary      String?     @db.VarChar(255)
+  postedAt    DateTime?   @map("posted_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([site, siteJobId], map: "jobs_site_site_job_id_key")
+  @@index([site], map: "jobs_site_idx")
+  @@map("jobs_temp")
+}
+
+/// Same as JobSite plus `remoteok`, which is staged in jobs_temp and is NOT yet
+/// a legal value in the `jobs` enum. Promoting RemoteOK to `jobs` (flipping
+/// `table` in scraper/remoteok.py) therefore needs its own migration adding
+/// `remoteok` to JobSite first, or every insert fails.
+enum JobSiteTemp {
+  indeed
+  glassdoor
+  jobright
+  weworkremotely
+  remoteok
   himalayas
   findmyremote
   jobicy
@@ -90,7 +138,7 @@ model User {
   role         Role     @default(guest)
   createdAt    DateTime @default(now()) @map("created_at")
 
-  profiles     Profile[]
+  profiles Profile[]
 
   @@map("users")
 }
@@ -115,16 +163,16 @@ model Keyword {
 /// A candidate/bidding profile, owned by an admin. Holds personal info plus
 /// repeatable work experience and education entries.
 model Profile {
-  id        Int      @id @default(autoincrement())
-  ownerId   Int      @map("owner_id")
-  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  id      Int  @id @default(autoincrement())
+  ownerId Int  @map("owner_id")
+  owner   User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
-  email     String?  @db.VarChar(255)
-  firstName String?  @map("first_name") @db.VarChar(120)
-  lastName  String?  @map("last_name") @db.VarChar(120)
-  phone     String?  @db.VarChar(60)
-  linkedin  String?  @db.VarChar(512)
-  location  String?  @db.VarChar(255)
+  email     String? @db.VarChar(255)
+  firstName String? @map("first_name") @db.VarChar(120)
+  lastName  String? @map("last_name") @db.VarChar(120)
+  phone     String? @db.VarChar(60)
+  linkedin  String? @db.VarChar(512)
+  location  String? @db.VarChar(255)
 
   workExperiences WorkExperience[]
   educations      Education[]
@@ -139,15 +187,15 @@ model Profile {
 /// One work-experience entry on a profile. `endDate` null = "Present".
 /// Dates are month-granularity (stored as the 1st of the month, no timezone).
 model WorkExperience {
-  id        Int      @id @default(autoincrement())
-  profileId Int      @map("profile_id")
-  profile   Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  id        Int     @id @default(autoincrement())
+  profileId Int     @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
-  company   String?  @db.VarChar(255)
-  location  String?  @db.VarChar(255)
+  company   String?   @db.VarChar(255)
+  location  String?   @db.VarChar(255)
   startDate DateTime? @map("start_date") @db.Date
   endDate   DateTime? @map("end_date") @db.Date
-  sortOrder Int      @default(0) @map("sort_order")
+  sortOrder Int       @default(0) @map("sort_order")
 
   @@index([profileId])
   @@map("work_experiences")
@@ -155,16 +203,16 @@ model WorkExperience {
 
 /// One education entry on a profile. `endDate` null = "Present".
 model Education {
-  id         Int      @id @default(autoincrement())
-  profileId  Int      @map("profile_id")
-  profile    Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  id        Int     @id @default(autoincrement())
+  profileId Int     @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
-  university String?  @db.VarChar(255)
-  location   String?  @db.VarChar(255)
-  degree     String?  @db.VarChar(255)
+  university String?   @db.VarChar(255)
+  location   String?   @db.VarChar(255)
+  degree     String?   @db.VarChar(255)
   startDate  DateTime? @map("start_date") @db.Date
   endDate    DateTime? @map("end_date") @db.Date
-  sortOrder  Int      @default(0) @map("sort_order")
+  sortOrder  Int       @default(0) @map("sort_order")
 
   @@index([profileId])
   @@map("educations")
