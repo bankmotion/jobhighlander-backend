@@ -3,6 +3,7 @@ import { createApp } from './app';
 import { env } from './config/env';
 import { prisma } from './lib/prisma';
 import { logger } from './services/logger.service';
+import { closeBrowser } from './resume/pdf';
 
 let server: Server | null = null;
 
@@ -13,6 +14,7 @@ async function shutdown(signal: string): Promise<void> {
       if (server) server.close(() => resolve());
       else resolve();
     });
+    await closeBrowser();
     await prisma.$disconnect();
   } catch (err) {
     logger.error('Error during shutdown', { err: String(err) });

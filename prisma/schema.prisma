@@ -27,6 +27,8 @@ model Job {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  resumes Resume[]
+
   @@unique([site, siteJobId], name: "site_siteJobId")
   @@index([site])
   @@map("jobs")
@@ -176,6 +178,7 @@ model Profile {
 
   workExperiences WorkExperience[]
   educations      Education[]
+  resumes         Resume[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -216,4 +219,46 @@ model Education {
 
   @@index([profileId])
   @@map("educations")
+}
+
+/// One AI-generated resume, tailored to one job posting for one profile.
+///
+/// `jobId` is NULLABLE with onDelete: SetNull, and the posting's title/company
+/// are denormalised onto the row. That combination is deliberate:
+///   - Cascade would let a routine job prune silently destroy work the user
+///     paid model tokens for and may have already sent to an employer.
+///   - Restrict would make `DELETE FROM jobs WHERE site='themuse'` fail, which
+///     is exactly the re-scrape flow this project uses.
+/// SetNull keeps deletes cheap AND keeps the resume readable afterwards, at the
+/// cost of two duplicated columns.
+///
+/// One row per (profile, job): regenerating replaces rather than appends. There
+/// is no history because nothing yet reads one — add a ResumeVersion table if
+/// that changes, rather than turning this into an append-only log.
+model Resume {
+  id Int @id @default(autoincrement())
+
+  profileId Int     @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  jobId Int? @map("job_id")
+  job   Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  /// Denormalised so the resume still makes sense once its job row is gone.
+  jobTitle   String  @map("job_title") @db.VarChar(512)
+  jobCompany String? @map("job_company") @db.VarChar(255)
+
+  /// The generated document, shaped by `tailoredResumeSchema`. Json rather than
+  /// columns because the shape is still settling and nothing queries into it.
+  data        Json
+  templateKey String @default("classic-ats") @map("template_key") @db.VarChar(64)
+  /// Which model produced it, so a later prompt change can find stale rows.
+  model       String @db.VarChar(64)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([profileId, jobId])
+  @@index([jobId])
+  @@map("resumes")
 }
