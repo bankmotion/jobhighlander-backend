@@ -12,6 +12,10 @@ const schema = z.object({
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
   AUTH_SECRET: z.string().min(1, 'AUTH_SECRET is required'),
   JWT_EXPIRES_IN: z.string().default('7d'),
+  // Optional on purpose: the app boots fine without AI configured. The
+  // Anthropic client throws a clear error on first use instead, so a missing
+  // key never blocks the scraper/job/auth routes from starting.
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
 });
 
 const parsed = schema.safeParse(process.env);

@@ -9,9 +9,19 @@ scrapeRunRouter.get(
   '/',
   requireAuth,
   requireRole('super_admin'),
-  async (_req: AuthedRequest, res: Response, next: NextFunction) => {
+  async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
-      res.json(await scrapeRunService.list());
+      const page = Number(req.query.page) || 1;
+      const pageSize = Number(req.query.pageSize) || 25;
+      // `?site=a&site=b` arrives as a string or an array depending on count.
+      const asList = (v: unknown): string[] =>
+        Array.isArray(v) ? v.map(String) : typeof v === 'string' && v ? [v] : [];
+      res.json(
+        await scrapeRunService.list(page, pageSize, {
+          sites: asList(req.query.site),
+          statuses: asList(req.query.status),
+        }),
+      );
     } catch (err) {
       next(err);
     }
