@@ -1,11 +1,6 @@
-import type { TailoredResume } from '../../schemas/resume.schema';
+import type { TemplateProps } from './types';
 
-export interface TemplateProps {
-  resume: TailoredResume;
-  /** Contact line assembled from the profile; the model never invents these. */
-  name: string;
-  contact: string;
-}
+export type { TemplateProps };
 
 /**
  * Classic ATS — single column, plain text throughout.
