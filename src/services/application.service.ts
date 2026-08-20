@@ -12,6 +12,14 @@ export interface AppliedStatus {
 /** Keyed by job id. A job nobody applied to is simply absent. */
 export type AppliedStatusMap = Record<number, AppliedStatus>;
 
+/** One application on a job, named by the profile it was made for. */
+export interface JobApplicationRow {
+  profileId: number;
+  profileName: string;
+  appliedAt: Date;
+  markedBy: string;
+}
+
 /** Raised for a rejected mark; the route turns it into a status code. */
 export class ApplicationError extends Error {
   constructor(
@@ -88,6 +96,40 @@ export const applicationService = {
     return row?.jobId == null
       ? null
       : { jobId: row.jobId, appliedAt: row.appliedAt, markedBy: row.markedBy.email };
+  },
+
+  /**
+   * Every application on ONE job, across every profile the caller may use.
+   *
+   * The per-profile status map answers "is this applied for the profile I have
+   * selected". On a detail page reached by a bare URL the selected profile is
+   * whichever came first, so that answer can be a confident "no" while another
+   * of the user's own profiles already applied — which is exactly the duplicate
+   * this feature exists to prevent. This answers the fuller question.
+   *
+   * One job and a handful of profiles, so the profile name is joined in rather
+   * than resolved by a second round trip.
+   */
+  async forJob(jobId: number, userId: number): Promise<JobApplicationRow[]> {
+    const rows = await prisma.jobApplication.findMany({
+      where: { jobId, profile: usableProfileWhere(userId) },
+      orderBy: { appliedAt: 'desc' },
+      select: {
+        profileId: true,
+        appliedAt: true,
+        markedBy: { select: { email: true } },
+        profile: { select: { firstName: true, lastName: true, email: true } },
+      },
+    });
+    return rows.map((r) => ({
+      profileId: r.profileId,
+      profileName:
+        [r.profile.firstName, r.profile.lastName].filter(Boolean).join(' ') ||
+        r.profile.email ||
+        `Profile #${r.profileId}`,
+      appliedAt: r.appliedAt,
+      markedBy: r.markedBy.email,
+    }));
   },
 
   /**

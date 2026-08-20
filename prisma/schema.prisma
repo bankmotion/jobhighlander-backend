@@ -24,6 +24,22 @@ model Job {
   salary      String?   @db.VarChar(255)
   postedAt    DateTime? @map("posted_at")
 
+  /// Content identity: sha1 of site, company, title, location and the first 100
+  /// characters of the description, each normalised (NFKD, accents stripped,
+  /// lower-cased, every run of non-alphanumerics collapsed to one space).
+  ///
+  /// `siteJobId` identifies a LISTING; this identifies the JOB. They are not the
+  /// same thing: The Muse regenerates the hash in its URL slug on every render,
+  /// and Glassdoor issues several listing ids for one posting, so keying only on
+  /// the source id let the same job in five times. Normalisation is what makes
+  /// it hold — two captures of that AppFolio posting differed by a single
+  /// character, so an exact hash would have missed them.
+  ///
+  /// Company is part of the key even though it is not in the description prefix:
+  /// without it, "Software Engineer (Full Stack)" in Lehi, UT collapsed two
+  /// different employers into one row.
+  fingerprint String? @db.Char(40)
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -31,6 +47,10 @@ model Job {
   applications JobApplication[]
 
   @@unique([site, siteJobId], name: "site_siteJobId")
+  /// The real duplicate guard. Nullable so a row whose fingerprint could not be
+  /// computed still stores — MySQL treats NULLs as distinct, so those simply do
+  /// not participate rather than colliding with each other.
+  @@unique([site, fingerprint], name: "site_fingerprint")
   @@index([site])
   @@map("jobs")
 }
@@ -70,10 +90,15 @@ model JobTemp {
   salary      String?     @db.VarChar(255)
   postedAt    DateTime?   @map("posted_at")
 
+  /// Mirrors `Job.fingerprint` so the writer can target either table with one
+  /// statement, and so a staged row is already de-duplicated before promotion.
+  fingerprint String? @db.Char(40)
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([site, siteJobId], map: "jobs_site_site_job_id_key")
+  @@unique([site, fingerprint], map: "jobs_temp_site_fingerprint_key")
   @@index([site], map: "jobs_site_idx")
   @@map("jobs_temp")
 }

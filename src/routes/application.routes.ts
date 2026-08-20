@@ -69,6 +69,27 @@ const statusQuery = z.object({
     .pipe(z.array(z.number().int().positive()).min(1).max(100)),
 });
 
+/**
+ * GET /api/applications/for-job?jobId= — every application on this job across
+ * the profiles the caller may use, so a page can say "another of your profiles
+ * already applied" rather than only answering for the selected one.
+ */
+applicationRouter.get(
+  '/for-job',
+  requireAuth,
+  async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const parsed = z
+        .object({ jobId: z.coerce.number().int().positive() })
+        .safeParse(req.query);
+      if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
+      res.json(await applicationService.forJob(parsed.data.jobId, req.user!.id));
+    } catch (err) {
+      failure(err, res, next);
+    }
+  },
+);
+
 /** GET /api/applications/status?profileId=&jobIds=1,2,3 — keyed by job id. */
 applicationRouter.get(
   '/status',
