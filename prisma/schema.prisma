@@ -45,6 +45,7 @@ model Job {
 
   resumes      Resume[]
   applications JobApplication[]
+  coverLetters CoverLetter[]
 
   @@unique([site, siteJobId], name: "site_siteJobId")
   /// The real duplicate guard. Nullable so a row whose fingerprint could not be
@@ -177,6 +178,9 @@ model User {
   /// users, so the marker records WHO, not just that someone did.
   applicationsMarked JobApplication[] @relation("ApplicationMarkedBy")
 
+  /// Prompts this super admin last edited.
+  promptsEdited Prompt[]
+
   @@map("users")
 }
 
@@ -227,6 +231,7 @@ model Profile {
   resumes         Resume[]
   invitations     ProfileInvitation[]
   applications    JobApplication[]
+  coverLetters    CoverLetter[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -395,6 +400,90 @@ model JobApplication {
   @@unique([profileId, jobId])
   @@index([jobId])
   @@map("job_applications")
+}
+
+/// One cover letter, tailored to one job posting for one profile.
+///
+/// Stored as TEXT, not as structured paragraphs, because the letter is a thing
+/// the user edits and pastes into an email. The model returns paragraphs, the
+/// service assembles the date, recipient block, salutation and sign-off around
+/// them, and what lands here is the finished letter. Re-parsing edited prose
+/// back into a structure would buy nothing and lose the user's wording.
+///
+/// `jobId` is NULLABLE with onDelete: SetNull and the posting's title/company
+/// are denormalised, for the same reason `Resume` does it: the jobs table is
+/// re-scraped and pruned routinely, and a maintenance delete must not destroy
+/// something the user paid model tokens for and may already have sent.
+///
+/// Exactly one per (profile, job). Regenerating replaces the text in place;
+/// there is no draft history, so nothing accumulates and there is never a
+/// question of which version is current.
+model CoverLetter {
+  id Int @id @default(autoincrement())
+
+  profileId Int     @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  jobId Int? @map("job_id")
+  job   Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  /// Denormalised so the letter still makes sense once its job row is gone.
+  jobTitle   String  @map("job_title") @db.VarChar(512)
+  jobCompany String? @map("job_company") @db.VarChar(255)
+
+  /// The finished letter, ready to paste. Includes the assembled date, so it
+  /// is a record of what was written rather than something that silently
+  /// re-dates itself a week later.
+  body String @db.Text
+
+  /// Claims the letter makes that the candidate record does not state. Json
+  /// rather than a table: it is a short list read only alongside its letter.
+  reviewNotes Json @map("review_notes")
+
+  /// True once the user has edited the text by hand. Regenerating then needs a
+  /// confirmation, or a hand-tuned letter is overwritten by one click.
+  edited Boolean @default(false)
+
+  /// Which model produced it, so a later prompt change can find stale rows.
+  model String @db.VarChar(64)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([profileId, jobId])
+  @@index([jobId])
+  @@map("cover_letters")
+}
+
+/// A model instruction, editable by super admins.
+///
+/// PROMPTS ARE DATA; THE CODE THAT SENDS THEM IS NOT. A row here replaces the
+/// system prompt for one generator and nothing else — it cannot introduce a new
+/// call, a new model or a new output schema, which is what makes a text field
+/// an admin can edit safe to execute against.
+///
+/// Every key has a compiled-in default (see `PROMPT_DEFAULTS`), and a missing,
+/// blank or deleted row falls back to it. Same reasoning as `FALLBACK_PRESET`:
+/// an admin who empties this box gets the shipped behaviour back, not a
+/// generator that silently produces nothing.
+///
+/// Editing a prompt invalidates the Anthropic cached prefix, so the first
+/// generation after a change costs full price. That is a one-off, and worth
+/// naming because it otherwise looks like a random cost spike.
+model Prompt {
+  key String @id @db.VarChar(64)
+
+  /// The instruction text sent as the `system` block.
+  content String @db.LongText
+
+  /// Who last changed it, so an unexplained change in output has an owner.
+  updatedById Int?  @map("updated_by_id")
+  updatedBy   User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("prompts")
 }
 
 /// A named, admin-curatable combination of the render parameters.

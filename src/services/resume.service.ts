@@ -4,6 +4,7 @@ import { anthropic, MODEL } from '../lib/anthropic';
 import { env, isProd } from '../config/env';
 import { mockResume } from './resume.mock';
 import { presetService } from './preset.service';
+import { promptService } from './prompt.service';
 import { usableProfileWhere } from './profile.service';
 import { logger } from '../services/logger.service';
 import { tailoredResumeSchema, type TailoredResume, type PreviewRequest } from '../schemas/resume.schema';
@@ -18,41 +19,13 @@ export class ResumeInputError extends Error {
   }
 }
 
-const SYSTEM = `You write a resume tailored to one specific job posting.
-
-The candidate's stored record is thin: it gives employers and dates, and often
-nothing else. Your job is to produce a strong, complete, posting-specific draft
-anyway — inferring the role, responsibilities and skills that a person with that
-career history would plausibly have. This is a DRAFT the candidate reviews and
-corrects, not a filed record, so a well-reasoned inference is useful and a blank
-section is not.
-
-HOW TO INFER WELL
-- Employer and dates are fixed facts. Never change, reorder or invent them.
-- Read the posting closely first. It tells you the vocabulary, seniority and
-  technical surface the draft should aim at.
-- Infer each title from the employer, the length and recency of the stint, the
-  overall career arc, and the target role. A five-year stay ending as the most
-  recent role implies more seniority than a nine-month one early on.
-- Ground responsibilities in what that employer is actually known for, and in
-  what this posting asks for. Prefer concrete, checkable-sounding work over
-  generic filler.
-- Numbers make a resume, but an invented metric is the easiest thing for an
-  interviewer to catch. Use them sparingly, keep them modest, and only where the
-  candidate could plausibly confirm the shape of the claim.
-- If the candidate's own notes are supplied, they OUTRANK your inference
-  everywhere they touch. Reword and reorder those facts; do not overwrite them.
-
-MARKING YOUR WORK
-- Set inferred=true on every bullet, skill and title you drafted rather than
-  read from the candidate's notes. Set it false only for things the notes state.
-- Put in reviewNotes the specific items the candidate must confirm or correct,
-  naming them ("Verify your NVIDIA title — drafted as Senior Data Engineer").
-- Put in gaps only what inference cannot reasonably bridge: a domain, credential
-  or seniority the career history genuinely does not reach. Do not list
-  everything you inferred here; that is what the inferred flags are for.
-
-Never write a placeholder like "N/A" or "[Company]". Use an empty string.`;
+/**
+ * The shipped default lives in prompt.service.ts alongside every other editable
+ * instruction, and `promptService.text` falls back to it when no row exists or
+ * a super admin has cleared the box. Read per generation rather than cached in
+ * a module constant, so an edit takes effect on the next request instead of the
+ * next restart.
+ */
 
 /** Name + contact line as they appear on the resume. Read from the profile,
  *  never from the request body — these identify a real person and the client
@@ -361,7 +334,7 @@ Produce the tailored resume now.`;
       max_tokens: 16_000,
       output_config: { effort: 'medium', format: zodOutputFormat(tailoredResumeSchema) },
       system: [
-        { type: 'text', text: SYSTEM },
+        { type: 'text', text: await promptService.text('resume.system') },
         // Breakpoint AFTER the candidate block and BEFORE the posting: the
         // candidate is stable across applications, the posting is not. Caching
         // is a prefix match, so this ordering is what makes application #2
