@@ -70,8 +70,17 @@ authRouter.post(
       const target = parsed.data.role;
       const actor = req.user!;
       if (id === actor.id) return res.status(400).json({ error: 'You cannot change your own role' });
-      if (target === 'super_admin') return res.status(403).json({ error: 'Cannot assign super_admin' });
-      if (actor.role === 'admin' && target !== 'bidder') {
+
+      // Promoting someone to super_admin is allowed, and only a super_admin can
+      // do it — `requireRole` above is what guarantees that, and the branch
+      // below re-states it so loosening the middleware cannot silently turn
+      // this into a self-service escalation.
+      //
+      // It hands over full control, the grantee included: a super_admin can
+      // change anyone's role but their own, so the person you promote can
+      // demote you. That was already true of the existing roles — this widens
+      // who it is true of, not what it means.
+      if (actor.role !== 'super_admin' && target !== 'bidder') {
         return res.status(403).json({ error: 'Admins can only approve users as bidders' });
       }
       res.json(await authService.setRole(id, target));
