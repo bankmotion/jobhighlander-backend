@@ -1,8 +1,6 @@
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { prisma } from '../lib/prisma';
 import { anthropic, MODEL } from '../lib/anthropic';
-import { env, isProd } from '../config/env';
-import { mockResume } from './resume.mock';
 import { presetService } from './preset.service';
 import { promptService } from './prompt.service';
 import { aiUsageService } from './aiUsage.service';
@@ -259,36 +257,6 @@ export const resumeService = {
       .map((e) => `- ${[e.degree, e.university].filter(Boolean).join(', ')}${e.location ? ` (${e.location})` : ''} — ${periodOf(e.startDate, e.endDate)}`)
       .join('\n');
 
-    // Dev-only short-circuit. Deliberately placed AFTER the job/profile lookup so
-    // the 404 paths and owner-scoping are still exercised — a mock that skips
-    // them would prove less than it appears to.
-    if (env.AI_MOCK && !isProd) {
-      logger.warn('Resume generated from MOCK (AI_MOCK=1) — no model was called', { jobId, profileId });
-      const mocked = mockResume({
-        jobTitle: job.title,
-        jobCompany: job.company,
-        employment: profile.workExperiences.map((w) => ({
-          company: w.company,
-          location: w.location,
-          period: periodOf(w.startDate, w.endDate),
-        })),
-        education: profile.educations.map((e) => ({
-          university: e.university,
-          degree: e.degree,
-          period: periodOf(e.startDate, e.endDate),
-        })),
-        hasNotes: Boolean(notes.trim()),
-      });
-      // Rehearse the real timeline when asked, so the waiting UI is exercised.
-      if (env.AI_MOCK_DELAY_MS > 0) {
-        await new Promise((r) => setTimeout(r, env.AI_MOCK_DELAY_MS));
-      }
-      const savedMock = await saveResume({
-        profileId, jobId, userId, job, data: mocked, model: 'mock',
-      });
-      return { ...mocked, saved: savedMock };
-    }
-
     // Only include the notes section when there is something in it. An empty
     // quoted block reads to the model as "the candidate stated nothing, and
     // that emptiness is meaningful", which suppresses the inference we want.
@@ -333,14 +301,24 @@ Produce the tailored resume now.`;
       .messages.parse({
       model: MODEL,
       max_tokens: 16_000,
-      output_config: { effort: 'medium', format: zodOutputFormat(tailoredResumeSchema) },
+      // No `effort` here: Haiku 4.5 REJECTS output_config.effort with a 400.
+      // Restore `effort: 'medium'` alongside MODEL if this moves back to Opus
+      // or Sonnet, where it is the main lever on output-token spend.
+      output_config: { format: zodOutputFormat(tailoredResumeSchema) },
+      // The candidate block still comes BEFORE the posting, because the
+      // candidate is stable across applications and the posting is not — that
+      // ordering is what makes a cache breakpoint possible at all.
+      //
+      // But there is no breakpoint here, because on Haiku 4.5 one cannot work:
+      // caching needs a 4096-token prefix on this model, and system prompt plus
+      // candidate block measured ~3.4k on real runs. A breakpoint below the
+      // minimum caches nothing and reports nothing — it silently does nothing at
+      // all, which is worse than not writing it. Restore
+      // `cache_control: { type: 'ephemeral' }` on the candidate block when MODEL
+      // goes back to Opus or Sonnet (512 and 1024-token minimums respectively).
       system: [
         { type: 'text', text: await promptService.text('resume.system') },
-        // Breakpoint AFTER the candidate block and BEFORE the posting: the
-        // candidate is stable across applications, the posting is not. Caching
-        // is a prefix match, so this ordering is what makes application #2
-        // onward cheap.
-        { type: 'text', text: candidateBlock, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: candidateBlock },
       ],
       messages: [{ role: 'user', content: jobBlock }],
       })

@@ -1,7 +1,6 @@
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { prisma } from '../lib/prisma';
 import { anthropic, MODEL } from '../lib/anthropic';
-import { env, isProd } from '../config/env';
 import { logger } from './logger.service';
 import { aiUsageService } from './aiUsage.service';
 import { promptService } from './prompt.service';
@@ -74,22 +73,6 @@ export function assembleLetter(input: {
     '',
     senderName || '',
   ].join('\n');
-}
-
-/** Canned paragraphs for AI_MOCK, shaped from the caller's real rows. */
-function mockParagraphs(jobTitle: string, company: string | null, employers: string[]) {
-  const at = company ? ` at ${company}` : '';
-  const where = employers.slice(0, 2).join(' and ') || 'my previous roles';
-  return {
-    paragraphs: [
-      `I am excited to apply for the ${jobTitle} role${at}, drawn by the scope of the work described in your posting and the chance to contribute to it directly.`,
-      `At ${where}, I led work that maps closely to what this role asks for — building the systems, tooling and review habits that let a team ship quickly without giving up confidence in what it ships.`,
-      `I would welcome the chance to talk about how that experience fits your team${at}, and what the first few months in this role would look like.`,
-    ],
-    reviewNotes: [
-      'MOCK OUTPUT (AI_MOCK=1) — no model was called; nothing here is tailored.',
-    ],
-  };
 }
 
 export const coverLetterService = {
@@ -212,20 +195,6 @@ export const coverLetterService = {
       .map((e) => `- ${[e.degree, e.university].filter(Boolean).join(', ')}${e.location ? ` (${e.location})` : ''} — ${periodOf(e.startDate, e.endDate)}`)
       .join('\n');
 
-    // Dev-only short-circuit, placed AFTER the lookups so the 404/409 paths and
-    // the profile scoping are still exercised — a mock that skips them would
-    // prove less than it appears to.
-    if (env.AI_MOCK && !isProd) {
-      logger.warn('Cover letter from MOCK (AI_MOCK=1) — no model was called', { jobId, profileId });
-      const mock = mockParagraphs(
-        job.title,
-        job.company,
-        profile.workExperiences.map((w) => w.company ?? '').filter(Boolean),
-      );
-      const body = assembleLetter({ paragraphs: mock.paragraphs, company: job.company, senderName });
-      return this.persist({ profileId, jobId, job, body, reviewNotes: mock.reviewNotes, model: 'mock' });
-    }
-
     const system = await promptService.text('cover-letter.system');
 
     // Same cache split as the resume generator: the candidate is identical on
@@ -275,10 +244,16 @@ Write the body paragraphs now.`;
       .messages.parse({
         model: MODEL,
         max_tokens: 4_000,
-        output_config: { effort: 'medium', format: zodOutputFormat(coverLetterDraftSchema) },
+        // No `effort`: Haiku 4.5 rejects output_config.effort with a 400.
+        // Restore `effort: 'medium'` if MODEL moves back to Opus or Sonnet.
+        output_config: { format: zodOutputFormat(coverLetterDraftSchema) },
+        // Candidate block before the posting, same reasoning as the resume
+        // generator — but no cache breakpoint, for the same reason: this prefix
+        // measured ~1.9k tokens and Haiku 4.5 needs 4096 before caching engages,
+        // so a breakpoint would silently do nothing. Restore it with MODEL.
         system: [
           { type: 'text', text: system },
-          { type: 'text', text: candidateBlock, cache_control: { type: 'ephemeral' } },
+          { type: 'text', text: candidateBlock },
         ],
         messages: [{ role: 'user', content: jobBlock }],
       })
