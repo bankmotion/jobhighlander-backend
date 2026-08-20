@@ -1,12 +1,8 @@
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { prisma } from '../lib/prisma';
-import { anthropic, MODEL } from '../lib/anthropic';
 import { presetService } from './preset.service';
-import { promptService } from './prompt.service';
-import { aiUsageService } from './aiUsage.service';
 import { usableProfileWhere } from './profile.service';
 import { logger } from '../services/logger.service';
-import { tailoredResumeSchema, type TailoredResume, type PreviewRequest } from '../schemas/resume.schema';
+import type { TailoredResume } from '../schemas/resume.schema';
 
 /** Thrown for conditions the caller can fix; the route maps these to 4xx. */
 export class ResumeInputError extends Error {
@@ -39,7 +35,7 @@ export function profileIdentity(p: {
   };
 }
 
-function periodOf(start: Date | null, end: Date | null): string {
+export function periodOf(start: Date | null, end: Date | null): string {
   const fmt = (d: Date) =>
     d.toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
   if (!start && !end) return '';
@@ -47,35 +43,6 @@ function periodOf(start: Date | null, end: Date | null): string {
 }
 
 
-/**
- * Anthropic errors arrive as `status: 400 invalid_request_error` for things a
- * developer must fix (no credits, bad key). The generic handler renders that as
- * "Bad request", which sends someone hunting through their own payload. Map the
- * ones that matter to messages that name the actual problem. Always throws.
- */
-function mapProviderError(err: unknown): never {
-  const e = err as {
-    status?: number;
-    error?: { error?: { type?: string; message?: string } };
-    message?: string;
-  };
-  const msg = e.error?.error?.message ?? e.message ?? '';
-
-  if (/credit balance is too low/i.test(msg)) {
-    throw new ResumeInputError(
-      'The Anthropic account has no API credits. Add credits at platform.claude.com under Billing.',
-      503,
-    );
-  }
-  if (e.status === 401) {
-    throw new ResumeInputError('The Anthropic API key was rejected. Check ANTHROPIC_API_KEY.', 503);
-  }
-  if (e.status === 429) {
-    throw new ResumeInputError('Rate limited by Anthropic. Wait a moment and try again.', 429);
-  }
-  logger.error('Anthropic call failed', { status: e.status, msg });
-  throw new ResumeInputError('The AI service failed. Try again.', 502);
-}
 
 
 /** What the job list needs to know about a resume without downloading it. */
@@ -110,7 +77,7 @@ function countInferred(d: Partial<TailoredResume> | null): number {
  * from the update — rewriting the words must not discard the design the user
  * applied to this application.
  */
-async function saveResume(input: {
+export async function saveResume(input: {
   profileId: number;
   jobId: number;
   userId: number;
@@ -219,150 +186,5 @@ export const resumeService = {
    * The result is upserted onto the single row for this (profile, job), so
    * regenerating replaces the text and the page survives a refresh.
    */
-  async preview(
-    { jobId, profileId, notes }: PreviewRequest,
-    userId: number,
-  ): Promise<TailoredResume & { saved: boolean }> {
-    const [job, profile] = await Promise.all([
-      prisma.job.findUnique({
-        where: { id: jobId },
-        select: { title: true, company: true, location: true, description: true },
-      }),
-      prisma.profile.findFirst({
-        where: { id: profileId, ...usableProfileWhere(userId) },
-        include: {
-          workExperiences: { orderBy: { sortOrder: 'asc' } },
-          educations: { orderBy: { sortOrder: 'asc' } },
-        },
-      }),
-    ]);
 
-    if (!job) throw new ResumeInputError('Job not found', 404);
-    // findFirst is owner-scoped, so "not found" and "not yours" are the same 404.
-    if (!profile) throw new ResumeInputError('Profile not found', 404);
-
-    const name = [profile.firstName, profile.lastName].filter(Boolean).join(' ');
-    const contact = [profile.email, profile.phone, profile.location, profile.linkedin]
-      .filter(Boolean)
-      .join(' | ');
-
-    // Employment and education rows carry dates the free-text notes usually get
-    // wrong, so they are stated as authoritative and the model is told to trust
-    // them over anything contradictory in the notes.
-    const employment = profile.workExperiences
-      .map((w) => `- ${w.company ?? '(company not recorded)'}${w.location ? `, ${w.location}` : ''} — ${periodOf(w.startDate, w.endDate)}`)
-      .join('\n');
-
-    const education = profile.educations
-      .map((e) => `- ${[e.degree, e.university].filter(Boolean).join(', ')}${e.location ? ` (${e.location})` : ''} — ${periodOf(e.startDate, e.endDate)}`)
-      .join('\n');
-
-    // Only include the notes section when there is something in it. An empty
-    // quoted block reads to the model as "the candidate stated nothing, and
-    // that emptiness is meaningful", which suppresses the inference we want.
-    const notesBlock = notes.trim()
-      ? `The candidate's own notes. These OUTRANK your inference wherever they
-touch — reword and reorder them, never overwrite them:
-"""
-${notes.trim()}
-"""`
-      : `The candidate supplied no notes. Draft the titles, responsibilities and
-skills yourself from the employment history above and the posting below, and
-flag every one of them inferred=true.`;
-
-    // Stable across every posting this candidate applies to → cached prefix.
-    const candidateBlock = `CANDIDATE RECORD
-
-Name: ${name || '(not recorded)'}
-Contact: ${contact || '(not recorded)'}
-
-Employment history — employers and dates are FIXED FACTS, never alter them:
-${employment || '(none recorded)'}
-
-Education — fixed facts:
-${education || '(none recorded)'}
-
-${notesBlock}`;
-
-    const jobBlock = `JOB POSTING
-
-Title: ${job.title}
-Company: ${job.company ?? '(not stated)'}
-Location: ${job.location ?? '(not stated)'}
-
-Description:
-"""
-${job.description.slice(0, 24_000)}
-"""
-
-Produce the tailored resume now.`;
-
-    const res = await anthropic()
-      .messages.parse({
-      model: MODEL,
-      max_tokens: 16_000,
-      // No `effort` here: Haiku 4.5 REJECTS output_config.effort with a 400.
-      // Restore `effort: 'medium'` alongside MODEL if this moves back to Opus
-      // or Sonnet, where it is the main lever on output-token spend.
-      output_config: { format: zodOutputFormat(tailoredResumeSchema) },
-      // The candidate block still comes BEFORE the posting, because the
-      // candidate is stable across applications and the posting is not — that
-      // ordering is what makes a cache breakpoint possible at all.
-      //
-      // But there is no breakpoint here, because on Haiku 4.5 one cannot work:
-      // caching needs a 4096-token prefix on this model, and system prompt plus
-      // candidate block measured ~3.4k on real runs. A breakpoint below the
-      // minimum caches nothing and reports nothing — it silently does nothing at
-      // all, which is worse than not writing it. Restore
-      // `cache_control: { type: 'ephemeral' }` on the candidate block when MODEL
-      // goes back to Opus or Sonnet (512 and 1024-token minimums respectively).
-      system: [
-        { type: 'text', text: await promptService.text('resume.system') },
-        { type: 'text', text: candidateBlock },
-      ],
-      messages: [{ role: 'user', content: jobBlock }],
-      })
-      .catch(mapProviderError);
-
-    // Recorded HERE, before the refusal and parse checks, because a response
-    // that arrives is a response that was billed. A refusal or an unparseable
-    // output still consumed the prompt; accounting for spend only on the happy
-    // path would quietly under-report the bill by exactly the calls that went
-    // wrong. Never throws, so it cannot cost the user the resume below.
-    await aiUsageService.record({
-      feature: 'resume',
-      model: MODEL,
-      userId,
-      profileId,
-      jobId,
-      usage: res.usage,
-    });
-
-    if (res.stop_reason === 'refusal') {
-      logger.warn('Resume generation refused', { jobId, category: res.stop_details?.category });
-      throw new ResumeInputError('The model declined this request.', 422);
-    }
-    if (!res.parsed_output) {
-      logger.error('Resume generation returned no parsed output', { jobId, stop: res.stop_reason });
-      throw new ResumeInputError('Generation did not return a usable resume. Try again.', 502);
-    }
-
-    // A save failure must not lose the resume the user just waited for — it is
-    // already in the response — but the outcome travels with it so the caller
-    // does not present an unsaved draft as stored.
-    const saved = await saveResume({
-      profileId, jobId, userId, job,
-      data: res.parsed_output as object,
-      model: MODEL,
-    });
-
-    logger.info('Resume generated', {
-      jobId,
-      profileId,
-      usage: res.usage,
-      gaps: res.parsed_output.gaps.length,
-      reviewNotes: res.parsed_output.reviewNotes.length,
-    });
-    return { ...res.parsed_output, saved };
-  },
 };

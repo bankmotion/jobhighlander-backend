@@ -1,5 +1,6 @@
 import { Router, type Response, type NextFunction } from 'express';
 import { coverLetterService, CoverLetterError } from '../services/coverLetter.service';
+import { generationService } from '../services/generation.service';
 import { aiEnabled } from '../lib/anthropic';
 import {
   coverLetterRequestSchema,
@@ -89,7 +90,11 @@ coverLetterRouter.post('/', requireAuth, async (req: AuthedRequest, res: Respons
     if (!parsed.success) {
       return res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
     }
-    res.json(await coverLetterService.generate(parsed.data, req.user!.id));
+    // Both documents come from one model call, so asking for a letter
+    // regenerates the resume with it. That is the cost of a single prompt
+    // governing both; the alternative was two calls that disagreed.
+    const { coverLetter } = await generationService.generate(parsed.data, req.user!.id);
+    res.json(coverLetter);
   } catch (err) {
     failure(err, res, next);
   }

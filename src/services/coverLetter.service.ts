@@ -1,12 +1,5 @@
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { prisma } from '../lib/prisma';
-import { anthropic, MODEL } from '../lib/anthropic';
-import { logger } from './logger.service';
-import { aiUsageService } from './aiUsage.service';
-import { promptService } from './prompt.service';
 import { usableProfileWhere } from './profile.service';
-import { coverLetterDraftSchema, type CoverLetterRequest } from '../schemas/coverLetter.schema';
-import type { TailoredResume } from '../schemas/resume.schema';
 
 /** Raised for a rejected request; the route turns it into a status code. */
 export class CoverLetterError extends Error {
@@ -30,12 +23,6 @@ export interface StoredCoverLetter {
 const fmtDate = (d: Date) =>
   d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 
-function periodOf(start: Date | null, end: Date | null): string {
-  const fmt = (d: Date) =>
-    d.toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
-  if (!start && !end) return '';
-  return `${start ? fmt(start) : '?'} – ${end ? fmt(end) : 'Present'}`;
-}
 
 /**
  * Wrap the model's paragraphs in the letter frame.
@@ -139,173 +126,6 @@ export const coverLetterService = {
       select: { body: true, reviewNotes: true, edited: true, model: true, updatedAt: true },
     });
     return { ...row, reviewNotes: (row.reviewNotes as string[]) ?? [] };
-  },
-
-  /**
-   * Generate a cover letter for one posting.
-   *
-   * The tailored resume is REQUIRED, not optional. Generated independently the
-   * two documents drift — different role framing, different achievements led
-   * with — and a hiring team reads them side by side, which is exactly where
-   * that shows. Requiring it also means the letter always has concrete material
-   * to draw on rather than employers and dates alone.
-   */
-  async generate(
-    { jobId, profileId, notes }: CoverLetterRequest,
-    userId: number,
-  ): Promise<StoredCoverLetter> {
-    const [job, profile, resumeRow] = await Promise.all([
-      prisma.job.findUnique({
-        where: { id: jobId },
-        select: { title: true, company: true, location: true, description: true },
-      }),
-      prisma.profile.findFirst({
-        where: { id: profileId, ...usableProfileWhere(userId) },
-        include: {
-          workExperiences: { orderBy: { sortOrder: 'asc' } },
-          educations: { orderBy: { sortOrder: 'asc' } },
-        },
-      }),
-      prisma.resume.findFirst({
-        where: { jobId, profileId, profile: usableProfileWhere(userId) },
-        select: { data: true },
-      }),
-    ]);
-
-    if (!job) throw new CoverLetterError('Job not found', 404);
-    if (!profile) throw new CoverLetterError('Profile not found', 404);
-    // 409, not 404: the request is well formed and the caller may retry it
-    // after doing the missing step. The message names that step.
-    if (!resumeRow) {
-      throw new CoverLetterError(
-        'Generate the tailored resume for this job first — the letter is written from it.',
-        409,
-      );
-    }
-
-    const senderName = [profile.firstName, profile.lastName].filter(Boolean).join(' ');
-    const contact = [profile.email, profile.phone, profile.location, profile.linkedin]
-      .filter(Boolean)
-      .join(' | ');
-
-    const employment = profile.workExperiences
-      .map((w) => `- ${w.company ?? '(company not recorded)'}${w.location ? `, ${w.location}` : ''} — ${periodOf(w.startDate, w.endDate)}`)
-      .join('\n');
-    const education = profile.educations
-      .map((e) => `- ${[e.degree, e.university].filter(Boolean).join(', ')}${e.location ? ` (${e.location})` : ''} — ${periodOf(e.startDate, e.endDate)}`)
-      .join('\n');
-
-    const system = await promptService.text('cover-letter.system');
-
-    // Same cache split as the resume generator: the candidate is identical on
-    // every application, the posting and its tailored resume are not. Caching
-    // is a prefix match, so this ordering is what keeps application #2 cheap.
-    const candidateBlock = `CANDIDATE RECORD
-
-Name: ${senderName || '(not recorded)'}
-Contact: ${contact || '(not recorded)'}
-
-Employment history — employers and dates are FIXED FACTS, never alter them:
-${employment || '(none recorded)'}
-
-Education — fixed facts:
-${education || '(none recorded)'}`;
-
-    const resume = resumeRow.data as Partial<TailoredResume>;
-    const notesBlock = notes.trim()
-      ? `\n\nThe candidate's instructions for this letter. These OUTRANK your own
-judgement wherever they touch:\n"""\n${notes.trim()}\n"""`
-      : '';
-
-    const jobBlock = `JOB POSTING
-
-Title: ${job.title}
-Company: ${job.company ?? '(not stated)'}
-Location: ${job.location ?? '(not stated)'}
-
-Description:
-"""
-${job.description.slice(0, 20_000)}
-"""
-
-TAILORED RESUME ALREADY WRITTEN FOR THIS POSTING
-
-The letter must agree with this document. Items carrying inferred=true were
-drafted rather than stated by the candidate — you may use them, but each one you
-use must appear in your reviewNotes.
-
-"""
-${JSON.stringify(resume).slice(0, 12_000)}
-"""${notesBlock}
-
-Write the body paragraphs now.`;
-
-    const res = await anthropic()
-      .messages.parse({
-        model: MODEL,
-        max_tokens: 4_000,
-        // No `effort`: Haiku 4.5 rejects output_config.effort with a 400.
-        // Restore `effort: 'medium'` if MODEL moves back to Opus or Sonnet.
-        output_config: { format: zodOutputFormat(coverLetterDraftSchema) },
-        // Candidate block before the posting, same reasoning as the resume
-        // generator — but no cache breakpoint, for the same reason: this prefix
-        // measured ~1.9k tokens and Haiku 4.5 needs 4096 before caching engages,
-        // so a breakpoint would silently do nothing. Restore it with MODEL.
-        system: [
-          { type: 'text', text: system },
-          { type: 'text', text: candidateBlock },
-        ],
-        messages: [{ role: 'user', content: jobBlock }],
-      })
-      .catch((err) => {
-        logger.error('Cover letter generation failed', { jobId, profileId, err: String(err) });
-        throw new CoverLetterError('The model could not be reached. Try again.', 502);
-      });
-
-    // Recorded before the refusal and parse checks: a response that arrives is
-    // a response that was billed, so accounting only for the ones that produced
-    // a letter would under-report the bill by exactly the failures. Never
-    // throws, so it cannot cost the user the letter below.
-    await aiUsageService.record({
-      feature: 'cover_letter',
-      model: MODEL,
-      userId,
-      profileId,
-      jobId,
-      usage: res.usage,
-    });
-
-    if (res.stop_reason === 'refusal') {
-      logger.warn('Cover letter generation refused', { jobId, category: res.stop_details?.category });
-      throw new CoverLetterError('The model declined this request.', 422);
-    }
-    if (!res.parsed_output) {
-      logger.error('Cover letter returned no parsed output', { jobId, stop: res.stop_reason });
-      throw new CoverLetterError('Generation did not return a usable letter. Try again.', 502);
-    }
-
-    const body = assembleLetter({
-      paragraphs: res.parsed_output.paragraphs,
-      company: job.company,
-      senderName,
-    });
-
-    logger.info('Cover letter generated', {
-      jobId,
-      profileId,
-      usage: res.usage,
-      paragraphs: res.parsed_output.paragraphs.length,
-      reviewNotes: res.parsed_output.reviewNotes.length,
-    });
-
-    return this.persist({
-      profileId,
-      jobId,
-      job,
-      body,
-      reviewNotes: res.parsed_output.reviewNotes,
-      model: MODEL,
-    });
   },
 
   /**

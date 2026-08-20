@@ -3,12 +3,20 @@ import { priceUsage, rateCard, type TokenUsage } from '../lib/pricing';
 import { logger } from './logger.service';
 
 /** Which generator spent the money. */
-export type AiFeature = 'resume' | 'cover_letter';
+/**
+ * Which generator spent the money.
+ *
+ * `application` is what the current code writes: one call produces both
+ * documents. `resume` and `cover_letter` remain because historical rows carry
+ * them and a spend log must keep reading its own history.
+ */
+export type AiFeature = 'application' | 'resume' | 'cover_letter';
 
 /** Human labels, so the dashboard never has to translate a database value. */
 const FEATURE_LABELS: Record<AiFeature, string> = {
-  resume: 'Resume',
-  cover_letter: 'Cover letter',
+  application: 'Resume + cover letter',
+  resume: 'Resume (legacy, separate call)',
+  cover_letter: 'Cover letter (legacy, separate call)',
 };
 
 export interface RecordInput {

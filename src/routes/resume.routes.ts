@@ -4,6 +4,7 @@ import { requireAuth, type AuthedRequest } from '../middleware/auth.middleware';
 import { aiEnabled } from '../lib/anthropic';
 import { previewRequestSchema } from '../schemas/resume.schema';
 import { resumeService, ResumeInputError, profileIdentity } from '../services/resume.service';
+import { generationService } from '../services/generation.service';
 import { prisma } from '../lib/prisma';
 import { tailoredResumeSchema } from '../schemas/resume.schema';
 import { renderResumeHtml } from '../resume/render';
@@ -15,10 +16,13 @@ import { logger } from '../services/logger.service';
 export const resumeRouter = Router();
 
 /**
- * POST /api/resumes/preview — generate a resume tailored to one job posting.
+ * POST /api/resumes/preview — generate the application for one job posting.
  *
- * Nothing is persisted: this is a preview surface while the output shape is
- * still settling, so it needs no migration to change.
+ * Despite the name this now writes BOTH documents, because they come from a
+ * single model call. The response shape is unchanged so existing callers keep
+ * working: the resume is returned as before, and the cover letter is saved
+ * alongside it and picked up by the cover-letter endpoints. Regenerating from
+ * here therefore also rewrites the letter.
  */
 resumeRouter.post('/preview', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
@@ -31,7 +35,7 @@ resumeRouter.post('/preview', requireAuth, async (req: AuthedRequest, res: Respo
       return res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
     }
 
-    const resume = await resumeService.preview(parsed.data, req.user!.id);
+    const { resume } = await generationService.generate(parsed.data, req.user!.id);
     res.json(resume);
   } catch (err) {
     if (err instanceof ResumeInputError) {

@@ -1,27 +1,33 @@
-import { promptService, PROMPT_DEFAULTS } from '../services/prompt.service';
+import { promptService, PROMPT_KEYS } from '../services/prompt.service';
 import { prisma } from '../lib/prisma';
 import { logger } from '../services/logger.service';
 
 /**
- * Write the shipped prompts into the database.
+ * Report what the `prompts` table holds, and drop rows for retired keys.
  *
- *   npx tsx src/scripts/seed-prompts.ts            insert any missing rows
- *   npx tsx src/scripts/seed-prompts.ts --force    reset every row to shipped
+ *   npx tsx src/scripts/seed-prompts.ts
  *
- * Idempotent. Without `--force` an existing row is left alone: a super admin's
- * wording outranks the shipped text, and a deploy that silently reverted their
- * edit would be worse than a prompt that is slightly out of date.
+ * THIS NO LONGER SEEDS TEXT. The prompt content lives in the database and got
+ * there by migration; there is no constant in the codebase for this script to
+ * insert, and re-inserting one would overwrite whatever a super admin has since
+ * written. If a prompt is missing, run the migrations (`npm run prisma:deploy`)
+ * or write it in Admin > Prompts.
  */
 async function main() {
-  const force = process.argv.includes('--force');
-  const { created, reset } = await promptService.seed(force);
-  logger.info(`Prompts seeded — ${created} created, ${reset} reset${force ? '' : ' (use --force to reset)'}`);
+  const pruned = await promptService.pruneRetiredKeys();
+  if (pruned) logger.info(`Pruned ${pruned} row(s) for keys the app no longer sends`);
 
+  let missing = 0;
   for (const p of await promptService.list()) {
-    const state = p.customised ? 'customised' : 'shipped default';
-    logger.info(`  ${p.key.padEnd(22)} ${String(p.content.length).padStart(5)} chars  ${state}`);
+    if (p.present) {
+      logger.info(`  ${p.key.padEnd(22)} ${String(p.content.length).padStart(5)} chars  ok`);
+    } else {
+      missing++;
+      logger.error(`  ${p.key.padEnd(22)} MISSING — generation using this prompt will fail`);
+    }
   }
-  logger.info(`${Object.keys(PROMPT_DEFAULTS).length} prompt(s) known to the app`);
+  logger.info(`${Object.keys(PROMPT_KEYS).length} prompt(s) known to the app, ${missing} missing`);
+  if (missing) process.exitCode = 1;
 }
 
 main()
