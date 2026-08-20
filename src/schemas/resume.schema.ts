@@ -38,6 +38,21 @@ const bullet = z4.object({
 
 const skill = z4.object({
   name: z4.string(),
+  /**
+   * The group this belongs under, e.g. "Backend", "Cloud and Infrastructure",
+   * "Soft Skills". Grouped rather than flat because a recruiter scans for a
+   * heading before a term, and a filter matches related terms better when they
+   * sit together than when they are spread through one long comma run.
+   *
+   * Free text, not an enum: the right groupings depend on the posting, and a
+   * fixed list would force a backend role's skills into a frontend taxonomy.
+   * An empty string is legal and falls into a trailing "Additional" group.
+   */
+  category: z4.string().describe(
+    'Short group heading, two or three words at most, e.g. "Backend" or ' +
+      '"Cloud and Infrastructure". Reuse the same wording across skills that ' +
+      'belong together; do not invent a group per skill.',
+  ),
   inferred: z4.boolean().describe(INFERRED),
 });
 
@@ -59,7 +74,12 @@ const educationEntry = z4.object({
 export const tailoredResumeSchema = z4.object({
   headline: z4.string().describe('Target-role headline, e.g. "Senior Data Engineer · Python · Spark · AWS".'),
   summary: z4.string().describe('2-3 sentences aimed at THIS posting.'),
-  skills: z4.array(skill).describe('Ordered most-relevant-first for this posting.'),
+  skills: z4
+    .array(skill)
+    .describe(
+      'Ordered most-relevant-first for this posting, and grouped: skills sharing ' +
+        'a category must be adjacent, with the most relevant category first.',
+    ),
   experience: z4.array(experienceEntry),
   education: z4.array(educationEntry),
   gaps: z4

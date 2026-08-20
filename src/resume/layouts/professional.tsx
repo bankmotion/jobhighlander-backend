@@ -1,4 +1,5 @@
 import type { TemplateProps } from './types';
+import { groupSkills } from '../skills';
 
 /**
  * Professional — centred name lockup, a tinted band behind each section
@@ -28,7 +29,11 @@ export function ProfessionalLayout({ resume, name, contact }: TemplateProps) {
       {resume.skills.length > 0 && (
         <section>
           <h2>Core Competencies</h2>
-          <p>{resume.skills.map((s) => s.name).join(' | ')}</p>
+          {groupSkills(resume.skills).map((g) => (
+            <p key={g.category}>
+              <strong>{g.category}:</strong> {g.names.join(' | ')}
+            </p>
+          ))}
         </section>
       )}
 

@@ -1,4 +1,5 @@
 import type { TemplateProps } from './types';
+import { groupSkills } from '../skills';
 
 /**
  * Modern — single column, sans-serif, an accent rule under the name and accent
@@ -54,7 +55,11 @@ export function ModernLayout({ resume, name, contact }: TemplateProps) {
       {resume.skills.length > 0 && (
         <section>
           <h2>Skills</h2>
-          <p className="skills">{resume.skills.map((s) => s.name).join('   ')}</p>
+          {groupSkills(resume.skills).map((g) => (
+            <p className="skills" key={g.category}>
+              <strong>{g.category}:</strong> {g.names.join('   ')}
+            </p>
+          ))}
         </section>
       )}
 

@@ -1,4 +1,5 @@
 import type { TemplateProps } from './types';
+import { groupSkills } from '../skills';
 
 /**
  * Creative — a coloured sidebar carrying contact, skills and education, beside
@@ -35,11 +36,18 @@ export function CreativeLayout({ resume, name, contact }: TemplateProps) {
         {resume.skills.length > 0 && (
           <div className="block">
             <h2>Skills</h2>
-            <ul className="plain">
-              {resume.skills.map((s) => (
-                <li key={s.name}>{s.name}</li>
-              ))}
-            </ul>
+            {/* The sidebar is narrow, so each group gets its own heading and
+                its own short list rather than one long undifferentiated run. */}
+            {groupSkills(resume.skills).map((g) => (
+              <div key={g.category} className="skill-group">
+                <strong>{g.category}</strong>
+                <ul className="plain">
+                  {g.names.map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
           </div>
         )}
 

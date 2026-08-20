@@ -29,10 +29,18 @@ const SAMPLE: TailoredResume = {
   headline: 'Senior Backend Engineer · Go · Kubernetes · AWS',
   summary:
     'Backend engineer with eight years building distributed services at scale. Owns systems end to end, from schema design through on-call, and has led two platform migrations without customer-visible downtime.',
-  skills: [
-    'Go', 'Kubernetes', 'PostgreSQL', 'AWS', 'Terraform',
-    'gRPC', 'Kafka', 'Redis', 'CI/CD', 'Observability',
-  ].map((name) => ({ name, inferred: false })),
+  // Grouped, because the thumbnails are what an admin picks a template from:
+  // a preview showing one flat run would misrepresent every real resume.
+  skills: (
+    [
+      ['Languages', ['Go', 'TypeScript', 'SQL']],
+      ['Platform', ['Kubernetes', 'AWS', 'Terraform']],
+      ['Data', ['PostgreSQL', 'Kafka', 'Redis']],
+      ['Practices', ['gRPC', 'CI/CD', 'Observability']],
+    ] as const
+  ).flatMap(([category, names]) =>
+    names.map((name) => ({ name, category, inferred: false })),
+  ),
   experience: [
     {
       company: 'Northwind Systems', period: 'Mar 2021 – Present', location: 'Remote',

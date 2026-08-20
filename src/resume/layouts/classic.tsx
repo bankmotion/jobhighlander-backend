@@ -1,4 +1,5 @@
 import type { TemplateProps } from './types';
+import { groupSkills } from '../skills';
 
 export type { TemplateProps };
 
@@ -38,9 +39,14 @@ export function ClassicLayout({ resume, name, contact }: TemplateProps) {
       {resume.skills.length > 0 && (
         <section>
           <h2>Skills</h2>
-          {/* One comma-separated run, not chips: a parser reads this as a list,
-              and it survives a column of any width. */}
-          <p>{resume.skills.map((s) => s.name).join(' · ')}</p>
+          {/* One line per group, each a plain comma run: a parser reads it as
+              a list, a human scans the headings, and it survives a column of
+              any width. Chips would look tidier and extract worse. */}
+          {groupSkills(resume.skills).map((g) => (
+            <p key={g.category}>
+              <strong>{g.category}:</strong> {g.names.join(' · ')}
+            </p>
+          ))}
         </section>
       )}
 

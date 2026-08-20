@@ -51,29 +51,22 @@ export function mockResume(src: MockSources): TailoredResume {
       .join(', ')}, building production pipelines and LLM-backed internal tooling. Aimed at the ${src.jobTitle} role${
       src.jobCompany ? ` at ${src.jobCompany}` : ''
     }.`,
-    skills: [
-      'Python',
-      'SQL',
-      'Airflow',
-      'Spark',
-      'Agent orchestration',
-      'Retrieval pipelines (RAG)',
-      'Evaluation harnesses',
-      'dbt',
-      'Snowflake / BigQuery',
-      'Kafka',
-      'AWS / GCP',
-    ].map((name) => ({ name, inferred })),
+    skills: (
+      [
+        ['Languages', ['Python', 'SQL']],
+        ['Data Platform', ['Airflow', 'Spark', 'dbt']],
+        ['AI Tooling', ['Agent orchestration', 'Retrieval pipelines (RAG)']],
+      ] as const
+    ).flatMap(([category, names]) =>
+      names.map((name) => ({ name, category, inferred })),
+    ),
     experience,
     education: src.education.map((e) => ({
       institution: e.university ?? '',
       degree: e.degree ?? '',
       period: e.period,
     })),
-    gaps: [
-      'Posting centres on marketing data — CDP, segmentation, campaign analytics. Nothing in this career history touches marketing data.',
-      'Asks for conversational analytics alongside a BI team — no evidence of BI partnership.',
-    ],
+    gaps: [],
     reviewNotes: [
       'THIS IS MOCK OUTPUT — AI_MOCK=1 is set, so no model was called.',
       'Verify every title: all were drafted from company and career arc, not from anything you supplied.',
