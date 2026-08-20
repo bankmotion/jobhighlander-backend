@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma';
+import { ownedProfileWhere, usableProfileWhere } from './profile.service';
 import { FALLBACK_PRESET, LAYOUTS, type Preset } from '../resume/templates/registry';
 import { ACCENTS, DENSITIES, FONT_PAIRS } from '../resume/tokens';
 
@@ -25,16 +26,26 @@ export const presetService = {
     return row ? toPreset(row) : FALLBACK_PRESET;
   },
 
-  /** The preset a profile renders with. */
-  async forProfile(profileId: number, ownerId: number): Promise<Preset> {
+  /**
+   * The preset a profile renders with. Scoped to profiles the caller may USE,
+   * so an invitee's resumes render in the design the owner chose rather than
+   * silently falling back to the built-in default.
+   */
+  async forProfile(profileId: number, userId: number): Promise<Preset> {
     const profile = await prisma.profile.findFirst({
-      where: { id: profileId, ownerId },
+      where: { id: profileId, ...usableProfileWhere(userId) },
       select: { defaultTemplateKey: true },
     });
     return this.get(profile?.defaultTemplateKey);
   },
 
-  /** Set a profile's default. Rejects an unknown key rather than storing it. */
+  /**
+   * Set a profile's default. Rejects an unknown key rather than storing it.
+   *
+   * OWNER-scoped, unlike `forProfile`: the default is part of the profile, and
+   * an invitee changing it would change how everyone else's resumes render.
+   * They can still pick a template per resume — that writes on the resume row.
+   */
   async setDefault(profileId: number, ownerId: number, key: string): Promise<boolean> {
     const exists = await prisma.templatePreset.findFirst({
       where: { key, archived: false },
@@ -42,7 +53,7 @@ export const presetService = {
     });
     if (!exists) return false;
     const r = await prisma.profile.updateMany({
-      where: { id: profileId, ownerId },
+      where: { id: profileId, ...ownedProfileWhere(ownerId) },
       data: { defaultTemplateKey: key },
     });
     return r.count > 0;

@@ -5,6 +5,7 @@ import { jobRouter } from './routes/job.routes';
 import { authRouter } from './routes/auth.routes';
 import { keywordRouter } from './routes/keyword.routes';
 import { profileRouter } from './routes/profile.routes';
+import { invitationRouter } from './routes/invitation.routes';
 import { scrapeRunRouter } from './routes/scrapeRun.routes';
 import { scraperSettingRouter } from './routes/scraperSetting.routes';
 import { resumeRouter } from './routes/resume.routes';
@@ -27,6 +28,7 @@ export function createApp(): Application {
   app.use('/api/jobs', requireAuth, jobRouter);
   app.use('/api/keywords', keywordRouter);
   app.use('/api/profiles', profileRouter);
+  app.use('/api/invitations', invitationRouter);
   app.use('/api/scrape-runs', scrapeRunRouter);
   app.use('/api/scraper-settings', scraperSettingRouter);
   app.use('/api/resumes', resumeRouter);

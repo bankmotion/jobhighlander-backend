@@ -4,6 +4,7 @@ import { anthropic, MODEL } from '../lib/anthropic';
 import { env, isProd } from '../config/env';
 import { mockResume } from './resume.mock';
 import { presetService } from './preset.service';
+import { usableProfileWhere } from './profile.service';
 import { logger } from '../services/logger.service';
 import { tailoredResumeSchema, type TailoredResume, type PreviewRequest } from '../schemas/resume.schema';
 
@@ -140,12 +141,12 @@ function countInferred(d: Partial<TailoredResume> | null): number {
 async function saveResume(input: {
   profileId: number;
   jobId: number;
-  ownerId: number;
+  userId: number;
   job: { title: string; company: string | null };
   data: object;
   model: string;
 }): Promise<boolean> {
-  const { profileId, jobId, ownerId, job, data, model } = input;
+  const { profileId, jobId, userId, job, data, model } = input;
 
   try {
     await prisma.resume.upsert({
@@ -153,7 +154,7 @@ async function saveResume(input: {
       create: {
         profileId, jobId, jobTitle: job.title, jobCompany: job.company,
         data: data as never, model,
-        templateKey: (await presetService.forProfile(profileId, ownerId)).key,
+        templateKey: (await presetService.forProfile(profileId, userId)).key,
       },
       update: {
         data: data as never, model,
@@ -178,9 +179,9 @@ export const resumeService = {
    * Having none is a normal state rather than an error — the caller renders the
    * generate prompt instead.
    */
-  async saved(jobId: number, profileId: number, ownerId: number) {
+  async saved(jobId: number, profileId: number, userId: number) {
     const row = await prisma.resume.findFirst({
-      where: { jobId, profileId, profile: { ownerId } },
+      where: { jobId, profileId, profile: usableProfileWhere(userId) },
       select: { id: true, data: true, templateKey: true, model: true, updatedAt: true },
     });
     if (!row) return null;
@@ -199,11 +200,11 @@ export const resumeService = {
    * of kilobytes to render a badge — so the counts the list needs are folded
    * down here instead.
    */
-  async statusFor(jobIds: number[], profileId: number, ownerId: number): Promise<Record<number, ResumeStatus>> {
+  async statusFor(jobIds: number[], profileId: number, userId: number): Promise<Record<number, ResumeStatus>> {
     if (jobIds.length === 0) return {};
 
     const rows = await prisma.resume.findMany({
-      where: { jobId: { in: jobIds }, profileId, profile: { ownerId } },
+      where: { jobId: { in: jobIds }, profileId, profile: usableProfileWhere(userId) },
       select: { jobId: true, templateKey: true, model: true, updatedAt: true, data: true },
     });
 
@@ -227,13 +228,14 @@ export const resumeService = {
   },
 
   /**
-   * Apply a template to the saved resume for this (profile, job). Owner-scoped,
-   * and the key is checked against the catalogue so a dead one cannot be stored.
+   * Apply a template to the saved resume for this (profile, job). Scoped to
+   * profiles the caller may use, and the key is checked against the catalogue
+   * so a dead one cannot be stored.
    */
-  async setTemplate(jobId: number, profileId: number, ownerId: number, key: string): Promise<boolean> {
+  async setTemplate(jobId: number, profileId: number, userId: number, key: string): Promise<boolean> {
     if ((await presetService.get(key)).key !== key) return false;
     const r = await prisma.resume.updateMany({
-      where: { jobId, profileId, profile: { ownerId } },
+      where: { jobId, profileId, profile: usableProfileWhere(userId) },
       data: { templateKey: key },
     });
     return r.count > 0;
@@ -247,7 +249,7 @@ export const resumeService = {
    */
   async preview(
     { jobId, profileId, notes }: PreviewRequest,
-    ownerId: number,
+    userId: number,
   ): Promise<TailoredResume & { saved: boolean }> {
     const [job, profile] = await Promise.all([
       prisma.job.findUnique({
@@ -255,7 +257,7 @@ export const resumeService = {
         select: { title: true, company: true, location: true, description: true },
       }),
       prisma.profile.findFirst({
-        where: { id: profileId, ownerId },
+        where: { id: profileId, ...usableProfileWhere(userId) },
         include: {
           workExperiences: { orderBy: { sortOrder: 'asc' } },
           educations: { orderBy: { sortOrder: 'asc' } },
@@ -308,7 +310,7 @@ export const resumeService = {
         await new Promise((r) => setTimeout(r, env.AI_MOCK_DELAY_MS));
       }
       const savedMock = await saveResume({
-        profileId, jobId, ownerId, job, data: mocked, model: 'mock',
+        profileId, jobId, userId, job, data: mocked, model: 'mock',
       });
       return { ...mocked, saved: savedMock };
     }
@@ -383,7 +385,7 @@ Produce the tailored resume now.`;
     // already in the response — but the outcome travels with it so the caller
     // does not present an unsaved draft as stored.
     const saved = await saveResume({
-      profileId, jobId, ownerId, job,
+      profileId, jobId, userId, job,
       data: res.parsed_output as object,
       model: MODEL,
     });

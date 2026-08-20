@@ -9,6 +9,7 @@ import { tailoredResumeSchema } from '../schemas/resume.schema';
 import { renderResumeHtml } from '../resume/render';
 import { htmlToPdf } from '../resume/pdf';
 import { presetService, PARAMETER_SPACE } from '../services/preset.service';
+import { usableProfileWhere } from '../services/profile.service';
 import { logger } from '../services/logger.service';
 
 export const resumeRouter = Router();
@@ -174,10 +175,11 @@ resumeRouter.post('/pdf', requireAuth, async (req: AuthedRequest, res: Response,
 
     const { profileId, templateKey, pageSize } = parsed.data;
 
-    // Owner-scoped: someone else's profile is a 404, not a 403, so the
-    // endpoint never confirms that a row exists.
+    // Scoped to profiles the caller may use (own or accepted invitation): one
+    // they may not is a 404, not a 403, so the endpoint never confirms that a
+    // row exists.
     const profile = await prisma.profile.findFirst({
-      where: { id: profileId, ownerId: req.user!.id },
+      where: { id: profileId, ...usableProfileWhere(req.user!.id) },
       select: { firstName: true, lastName: true, email: true, phone: true, location: true, linkedin: true },
     });
     if (!profile) return res.status(404).json({ error: 'Profile not found' });

@@ -142,6 +142,11 @@ model User {
 
   profiles Profile[]
 
+  /// Invitations addressed to this user (profiles others let them use).
+  profileInvitations ProfileInvitation[] @relation("InvitationInvitee")
+  /// Invitations this user sent out.
+  sentInvitations    ProfileInvitation[] @relation("InvitationInviter")
+
   @@map("users")
 }
 
@@ -164,6 +169,12 @@ model Keyword {
 
 /// A candidate/bidding profile, owned by an admin. Holds personal info plus
 /// repeatable work experience and education entries.
+///
+/// Two kinds of user reach a profile: its OWNER, who may edit and delete it,
+/// and anyone holding an accepted `ProfileInvitation`, who may only read it and
+/// generate resumes from it. Every query that serves a profile has to pick one
+/// of those two scopes deliberately — see `ownedProfileWhere` /
+/// `usableProfileWhere` in profile.service.ts.
 model Profile {
   id      Int  @id @default(autoincrement())
   ownerId Int  @map("owner_id")
@@ -184,12 +195,54 @@ model Profile {
   workExperiences WorkExperience[]
   educations      Education[]
   resumes         Resume[]
+  invitations     ProfileInvitation[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([ownerId])
   @@map("profiles")
+}
+
+/// An invitation from a profile's owner letting another user USE that profile:
+/// see it on their own Profiles page and generate resumes from it, without ever
+/// being able to edit its contents.
+///
+/// The invitation is a request, not a grant — access starts only once the
+/// invitee sets it to `accepted`. Keeping `declined` as a stored state rather
+/// than deleting the row is what lets the owner see the answer instead of
+/// watching an invitation silently vanish and re-sending it forever.
+model ProfileInvitation {
+  id Int @id @default(autoincrement())
+
+  profileId Int     @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  /// Who was invited.
+  userId Int  @map("user_id")
+  user   User @relation("InvitationInvitee", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Who sent it. Normally the profile's owner, but recorded separately so the
+  /// trail survives a future ownership transfer.
+  invitedById Int  @map("invited_by_id")
+  invitedBy   User @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  status InvitationStatus @default(pending)
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  respondedAt DateTime? @map("responded_at")
+
+  /// One invitation per (profile, user): re-inviting reopens the existing row
+  /// rather than stacking duplicates the owner would have to reconcile.
+  @@unique([profileId, userId])
+  @@index([userId, status])
+  @@map("profile_invitations")
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  declined
 }
 
 /// One work-experience entry on a profile. `endDate` null = "Present".
