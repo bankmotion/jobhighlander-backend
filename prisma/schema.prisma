@@ -181,6 +181,9 @@ model User {
   /// Prompts this super admin last edited.
   promptsEdited Prompt[]
 
+  /// Anthropic calls made on this user's behalf, for cost attribution.
+  aiUsage AiUsage[]
+
   @@map("users")
 }
 
@@ -521,4 +524,71 @@ model TemplatePreset {
 
   @@index([category, sortOrder])
   @@map("template_presets")
+}
+
+/// One row per Anthropic API call: what it consumed, what it cost, and for whom.
+///
+/// COST IS PRICED ONCE, AT CALL TIME, AND STORED. The alternative — keeping only
+/// token counts and multiplying by a live rate table on read — makes every
+/// historical total change the day Anthropic changes a price, which defeats the
+/// point of a spend log: reconciling against an invoice that was issued at the
+/// old rate. `lib/pricing.ts` holds the rates; this table holds the outcome.
+///
+/// Written on the success path of each generator and never on the mock path
+/// (AI_MOCK calls no model, so it spends nothing). A failure to write a row is
+/// swallowed and logged, not raised: losing the accounting for a resume is bad,
+/// losing the resume the user waited a minute for is worse.
+model AiUsage {
+  id Int @id @default(autoincrement())
+
+  /// Which generator made the call: resume | cover_letter.
+  feature String @db.VarChar(32)
+
+  /// The exact model string sent, so a rate change can be traced to the rows it
+  /// applies to.
+  model String @db.VarChar(64)
+
+  /// Who triggered it. SetNull rather than Cascade: deleting a user must not
+  /// delete the money they spent — the invoice still arrives either way.
+  userId Int?  @map("user_id")
+  user   User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// Denormalised so a row can still name who spent it once the user is gone,
+  /// same reasoning as the job title carried on `Resume`.
+  userEmail String? @map("user_email") @db.VarChar(255)
+
+  /// Context for the call. Plain ints with no foreign keys on purpose: jobs are
+  /// re-scraped and pruned routinely, and a spend record must survive that
+  /// without either blocking the delete or vanishing with it.
+  profileId Int? @map("profile_id")
+  jobId     Int? @map("job_id")
+
+  /// Token counts exactly as the API reported them.
+  ///
+  /// `inputTokens` is the UNCACHED REMAINDER, not the prompt size — total tokens
+  /// sent is the sum of the three input columns. Both generators cache the
+  /// candidate block, so on the second application onward most of the prompt
+  /// lands in `cacheReadTokens` and this column looks implausibly small.
+  inputTokens      Int @default(0) @map("input_tokens")
+  cacheWriteTokens Int @default(0) @map("cache_write_tokens")
+  cacheReadTokens  Int @default(0) @map("cache_read_tokens")
+  outputTokens     Int @default(0) @map("output_tokens")
+
+  /// Cost in MILLIONTHS of a dollar.
+  ///
+  /// Integer micro-dollars, not DECIMAL and certainly not a float: a thousand
+  /// cached input tokens on Opus cost $0.0005, which rounds away entirely in
+  /// cents, and float addition makes a month's total depend on summation order.
+  costMicroUsd Int @default(0) @map("cost_micro_usd")
+
+  /// False when the model had no rate in the table, so `costMicroUsd` is 0 and
+  /// the dashboard reports the gap instead of quietly under-stating the bill.
+  priced Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// The dashboard reads one date range at a time; this is the whole query.
+  @@index([createdAt])
+  @@index([userId])
+  @@map("ai_usage")
 }

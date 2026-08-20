@@ -12,6 +12,7 @@ import { scraperSettingRouter } from './routes/scraperSetting.routes';
 import { resumeRouter } from './routes/resume.routes';
 import { coverLetterRouter } from './routes/coverLetter.routes';
 import { promptRouter } from './routes/prompt.routes';
+import { aiUsageRouter } from './routes/aiUsage.routes';
 import { requireAuth } from './middleware/auth.middleware';
 import { notFound, errorHandler } from './middleware/error.middleware';
 
@@ -38,6 +39,7 @@ export function createApp(): Application {
   app.use('/api/resumes', resumeRouter);
   app.use('/api/cover-letters', coverLetterRouter);
   app.use('/api/prompts', promptRouter);
+  app.use('/api/ai-usage', aiUsageRouter);
 
   app.use(notFound);
   app.use(errorHandler);

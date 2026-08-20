@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { anthropic, MODEL } from '../lib/anthropic';
 import { env, isProd } from '../config/env';
 import { logger } from './logger.service';
+import { aiUsageService } from './aiUsage.service';
 import { promptService } from './prompt.service';
 import { usableProfileWhere } from './profile.service';
 import { coverLetterDraftSchema, type CoverLetterRequest } from '../schemas/coverLetter.schema';
@@ -285,6 +286,19 @@ Write the body paragraphs now.`;
         logger.error('Cover letter generation failed', { jobId, profileId, err: String(err) });
         throw new CoverLetterError('The model could not be reached. Try again.', 502);
       });
+
+    // Recorded before the refusal and parse checks: a response that arrives is
+    // a response that was billed, so accounting only for the ones that produced
+    // a letter would under-report the bill by exactly the failures. Never
+    // throws, so it cannot cost the user the letter below.
+    await aiUsageService.record({
+      feature: 'cover_letter',
+      model: MODEL,
+      userId,
+      profileId,
+      jobId,
+      usage: res.usage,
+    });
 
     if (res.stop_reason === 'refusal') {
       logger.warn('Cover letter generation refused', { jobId, category: res.stop_details?.category });

@@ -5,6 +5,7 @@ import { env, isProd } from '../config/env';
 import { mockResume } from './resume.mock';
 import { presetService } from './preset.service';
 import { promptService } from './prompt.service';
+import { aiUsageService } from './aiUsage.service';
 import { usableProfileWhere } from './profile.service';
 import { logger } from '../services/logger.service';
 import { tailoredResumeSchema, type TailoredResume, type PreviewRequest } from '../schemas/resume.schema';
@@ -344,6 +345,20 @@ Produce the tailored resume now.`;
       messages: [{ role: 'user', content: jobBlock }],
       })
       .catch(mapProviderError);
+
+    // Recorded HERE, before the refusal and parse checks, because a response
+    // that arrives is a response that was billed. A refusal or an unparseable
+    // output still consumed the prompt; accounting for spend only on the happy
+    // path would quietly under-report the bill by exactly the calls that went
+    // wrong. Never throws, so it cannot cost the user the resume below.
+    await aiUsageService.record({
+      feature: 'resume',
+      model: MODEL,
+      userId,
+      profileId,
+      jobId,
+      usage: res.usage,
+    });
 
     if (res.stop_reason === 'refusal') {
       logger.warn('Resume generation refused', { jobId, category: res.stop_details?.category });
