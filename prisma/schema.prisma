@@ -27,7 +27,8 @@ model Job {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  resumes Resume[]
+  resumes      Resume[]
+  applications JobApplication[]
 
   @@unique([site, siteJobId], name: "site_siteJobId")
   @@index([site])
@@ -147,6 +148,10 @@ model User {
   /// Invitations this user sent out.
   sentInvitations    ProfileInvitation[] @relation("InvitationInviter")
 
+  /// "Applied" marks this user put on a job. A shared profile has several
+  /// users, so the marker records WHO, not just that someone did.
+  applicationsMarked JobApplication[] @relation("ApplicationMarkedBy")
+
   @@map("users")
 }
 
@@ -196,6 +201,7 @@ model Profile {
   educations      Education[]
   resumes         Resume[]
   invitations     ProfileInvitation[]
+  applications    JobApplication[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -319,6 +325,51 @@ model Resume {
   @@unique([profileId, jobId])
   @@index([jobId])
   @@map("resumes")
+}
+
+/// "I applied to this posting" — one marker per (profile, job).
+///
+/// Scoped to a PROFILE rather than to a user or to the job itself, matching
+/// `Resume`. Two bidders working different profiles apply to different jobs, so
+/// a flag on `Job` would show one person's progress to everyone. A profile
+/// shared with a team is the case that makes this load-bearing: everyone using
+/// that profile must see the same applied state, or two of them apply to the
+/// same posting under the same name.
+///
+/// `jobId` is NULLABLE with onDelete: SetNull and the posting's title/company
+/// are denormalised onto the row, for the same reason `Resume` does it: the job
+/// table is re-scraped and pruned routinely, and "I already applied here" is
+/// user-entered history that a maintenance delete must not destroy. Re-applying
+/// to a posting you already answered is exactly what this feature exists to
+/// prevent.
+model JobApplication {
+  id Int @id @default(autoincrement())
+
+  profileId Int     @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  jobId Int? @map("job_id")
+  job   Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  /// Denormalised so the record still reads once its job row is gone.
+  jobTitle   String  @map("job_title") @db.VarChar(512)
+  jobCompany String? @map("job_company") @db.VarChar(255)
+
+  /// When the application was marked. Editable later if someone back-dates it;
+  /// distinct from createdAt, which is when the row appeared.
+  appliedAt DateTime @default(now()) @map("applied_at")
+
+  /// Which member of a shared profile marked it.
+  markedById Int  @map("marked_by_id")
+  markedBy   User @relation("ApplicationMarkedBy", fields: [markedById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// One marker per pairing: marking twice is idempotent, not a second row.
+  @@unique([profileId, jobId])
+  @@index([jobId])
+  @@map("job_applications")
 }
 
 /// A named, admin-curatable combination of the render parameters.

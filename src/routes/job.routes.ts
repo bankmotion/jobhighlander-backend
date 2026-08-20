@@ -1,6 +1,9 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { jobService } from '../services/job.service';
+import { prisma } from '../lib/prisma';
+import { usableProfileWhere } from '../services/profile.service';
+import type { AuthedRequest } from '../middleware/auth.middleware';
 
 export const jobRouter = Router();
 
@@ -16,22 +19,34 @@ const listQuerySchema = z.object({
   // '1'/'true' → remote-only. Absent → no remote filter.
   remote: z.string().optional(),
   q: z.string().trim().min(1).optional(),
+  /** all | applied | unapplied — needs `profileId` to mean anything. */
+  applied: z.enum(['all', 'applied', 'unapplied']).default('all'),
+  profileId: z.coerce.number().int().positive().optional(),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(20),
 });
 
 /** GET /api/jobs — paginated, filterable list. */
-jobRouter.get('/', async (req: Request, res: Response, next: NextFunction) => {
+jobRouter.get('/', async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = listQuerySchema.safeParse(req.query);
     if (!parsed.success) {
       return res.status(400).json({ error: 'Invalid query', details: parsed.error.flatten() });
     }
-    const { site, remote, ...rest } = parsed.data;
+    const { site, remote, profileId, ...rest } = parsed.data;
+    // The profile is only honoured if the caller may actually use it, so a
+    // guessed id cannot reveal which jobs someone else has applied to.
+    const usable =
+      profileId !== undefined &&
+      (await prisma.profile.findFirst({
+        where: { id: profileId, ...usableProfileWhere(req.user!.id) },
+        select: { id: true },
+      }));
     const result = await jobService.list({
       ...rest,
       sites: site,
       remote: remote === '1' || remote === 'true',
+      profileId: usable ? profileId : undefined,
     });
     res.json(result);
   } catch (err) {

@@ -3,6 +3,9 @@ import { prisma } from '../lib/prisma';
 
 const JOB_SITES = new Set<string>(Object.values(JobSite));
 
+/** Which side of the applied line to keep. `all` applies no filter. */
+export type AppliedFilter = 'all' | 'applied' | 'unapplied';
+
 export interface ListJobsParams {
   /** Filter to these sites (OR). Empty/undefined = all sites. */
   sites?: string[];
@@ -11,6 +14,14 @@ export interface ListJobsParams {
   location?: string;
   /** Free-text search across title/description/location. */
   q?: string;
+  /**
+   * Keep only jobs this profile has (or has not) been marked applied to.
+   *
+   * Applied is per PROFILE, so it needs one: without `profileId` the filter is
+   * meaningless and is ignored rather than guessed at.
+   */
+  applied?: AppliedFilter;
+  profileId?: number;
   page: number;
   pageSize: number;
 }
@@ -20,13 +31,32 @@ export interface ListJobsParams {
  */
 export const jobService = {
   async list(params: ListJobsParams) {
-    const { sites, remote, location, q, page, pageSize } = params;
+    const { sites, remote, location, q, applied, profileId, page, pageSize } = params;
 
     const validSites = (sites ?? []).filter((s) => JOB_SITES.has(s)) as JobSite[];
+
+    /**
+     * Applied is filtered in SQL, not after the fact.
+     *
+     * Trimming the page in JavaScript would leave `total` counting rows the
+     * user cannot see: page 3 of "applied only" would report hundreds of
+     * results and render four, and the last pages would be empty. The filter
+     * has to reach the same query the count does.
+     *
+     * Ignored without a profile, since there is nothing to be applied AS.
+     */
+    const appliedWhere: Prisma.JobWhereInput =
+      !profileId || !applied || applied === 'all'
+        ? {}
+        : applied === 'applied'
+          ? { applications: { some: { profileId } } }
+          : { applications: { none: { profileId } } };
+
     const where: Prisma.JobWhereInput = {
       ...(validSites.length ? { site: { in: validSites } } : {}),
       ...(remote ? { remote: true } : {}),
       ...(location ? { location: { contains: location } } : {}),
+      ...appliedWhere,
       ...(q
         ? {
             OR: [
