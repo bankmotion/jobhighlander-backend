@@ -237,9 +237,9 @@ model Education {
 /// SetNull keeps deletes cheap AND keeps the resume readable afterwards, at the
 /// cost of two duplicated columns.
 ///
-/// One row per (profile, job): regenerating replaces rather than appends. There
-/// is no history because nothing yet reads one — add a ResumeVersion table if
-/// that changes, rather than turning this into an append-only log.
+/// Exactly one resume per (profile, job). Regenerating replaces the text in
+/// place; there is no draft history, so nothing accumulates and there is never
+/// a question of which version is current.
 model Resume {
   id Int @id @default(autoincrement())
 

@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { anthropic, MODEL } from '../lib/anthropic';
 import { env, isProd } from '../config/env';
 import { mockResume } from './resume.mock';
+import { presetService } from './preset.service';
 import { logger } from '../services/logger.service';
 import { tailoredResumeSchema, type TailoredResume, type PreviewRequest } from '../schemas/resume.schema';
 
@@ -103,21 +104,151 @@ function mapProviderError(err: unknown): never {
   throw new ResumeInputError('The AI service failed. Try again.', 502);
 }
 
+
+/** What the job list needs to know about a resume without downloading it. */
+export interface ResumeStatus {
+  jobId: number;
+  templateKey: string;
+  model: string;
+  updatedAt: Date;
+  headline: string;
+  /** Bullets, skills and titles the model drafted rather than read from notes. */
+  inferredCount: number;
+  reviewNoteCount: number;
+}
+
+/** Total items flagged `inferred` across skills, titles and bullets. */
+function countInferred(d: Partial<TailoredResume> | null): number {
+  if (!d) return 0;
+  const skills = d.skills?.filter((s) => s.inferred).length ?? 0;
+  const experience =
+    d.experience?.reduce(
+      (n, e) => n + (e.titleInferred ? 1 : 0) + (e.bullets?.filter((b) => b.inferred).length ?? 0),
+      0,
+    ) ?? 0;
+  return skills + experience;
+}
+
+/**
+ * Save one generated resume for a (profile, job).
+ *
+ * Upsert, not insert: the pairing is unique, so regenerating rewrites the text
+ * in place rather than accumulating drafts. The template is deliberately absent
+ * from the update — rewriting the words must not discard the design the user
+ * applied to this application.
+ */
+async function saveResume(input: {
+  profileId: number;
+  jobId: number;
+  ownerId: number;
+  job: { title: string; company: string | null };
+  data: object;
+  model: string;
+}): Promise<boolean> {
+  const { profileId, jobId, ownerId, job, data, model } = input;
+
+  try {
+    await prisma.resume.upsert({
+      where: { profileId_jobId: { profileId, jobId } },
+      create: {
+        profileId, jobId, jobTitle: job.title, jobCompany: job.company,
+        data: data as never, model,
+        templateKey: (await presetService.forProfile(profileId, ownerId)).key,
+      },
+      update: {
+        data: data as never, model,
+        jobTitle: job.title, jobCompany: job.company,
+      },
+    });
+    return true;
+  } catch (err) {
+    // The generation itself succeeded and is already in the response, so this
+    // must not throw — but the caller has to KNOW, or a client that trusts the
+    // 200 will show a resume the database never accepted and offer to open a
+    // row that does not exist.
+    logger.error('Could not save generated resume', { jobId, profileId, err: String(err) });
+    return false;
+  }
+}
+
 export const resumeService = {
-  /** The saved draft for this (profile, job), or null. Owner-scoped. */
+  /**
+   * The saved resume for this (profile, job), or null. Exactly one can exist.
+   *
+   * Having none is a normal state rather than an error — the caller renders the
+   * generate prompt instead.
+   */
   async saved(jobId: number, profileId: number, ownerId: number) {
     const row = await prisma.resume.findFirst({
       where: { jobId, profileId, profile: { ownerId } },
-      select: { data: true, templateKey: true, model: true, updatedAt: true },
+      select: { id: true, data: true, templateKey: true, model: true, updatedAt: true },
     });
-    return row ?? null;
+    if (!row) return null;
+    // A preset can be archived or renamed after it was applied; `get` falls back
+    // for an unknown key, so a mismatch means the stored key is dead and the
+    // client should show the fallback as selected rather than a phantom option.
+    const preset = await presetService.get(row.templateKey);
+    return { ...row, templateKey: preset.key };
   },
 
   /**
-   * Generate a resume tailored to one posting. Nothing is persisted — this is a
-   * preview endpoint by design, so the shape can change without a migration.
+   * Which of `jobIds` already have a resume for this profile.
+   *
+   * One query for a whole page of jobs rather than one request per card. The
+   * full document is deliberately NOT returned — a page of 20 would be hundreds
+   * of kilobytes to render a badge — so the counts the list needs are folded
+   * down here instead.
    */
-  async preview({ jobId, profileId, notes }: PreviewRequest, ownerId: number): Promise<TailoredResume> {
+  async statusFor(jobIds: number[], profileId: number, ownerId: number): Promise<Record<number, ResumeStatus>> {
+    if (jobIds.length === 0) return {};
+
+    const rows = await prisma.resume.findMany({
+      where: { jobId: { in: jobIds }, profileId, profile: { ownerId } },
+      select: { jobId: true, templateKey: true, model: true, updatedAt: true, data: true },
+    });
+
+    const out: Record<number, ResumeStatus> = {};
+    for (const r of rows) {
+      // jobId is nullable in the schema (a deleted posting sets it null), so a
+      // row can come back without one even though the filter asked for a set.
+      if (r.jobId == null) continue;
+      const d = r.data as Partial<TailoredResume> | null;
+      out[r.jobId] = {
+        jobId: r.jobId,
+        templateKey: r.templateKey,
+        model: r.model,
+        updatedAt: r.updatedAt,
+        headline: d?.headline ?? '',
+        inferredCount: countInferred(d),
+        reviewNoteCount: d?.reviewNotes?.length ?? 0,
+      };
+    }
+    return out;
+  },
+
+  /**
+   * Apply a template to the saved resume for this (profile, job). Owner-scoped,
+   * and the key is checked against the catalogue so a dead one cannot be stored.
+   */
+  async setTemplate(jobId: number, profileId: number, ownerId: number, key: string): Promise<boolean> {
+    if ((await presetService.get(key)).key !== key) return false;
+    const r = await prisma.resume.updateMany({
+      where: { jobId, profileId, profile: { ownerId } },
+      data: { templateKey: key },
+    });
+    return r.count > 0;
+  },
+
+  /**
+   * Generate a resume tailored to one posting and save it.
+   *
+   * The result is upserted onto the single row for this (profile, job), so
+   * regenerating replaces the text and the page survives a refresh.
+   */
+  async preview(
+    { jobId, profileId, notes }: PreviewRequest,
+    ownerId: number,
+  ): Promise<TailoredResume & { saved: boolean }> {
     const [job, profile] = await Promise.all([
       prisma.job.findUnique({
         where: { id: jobId },
@@ -172,18 +303,14 @@ export const resumeService = {
         })),
         hasNotes: Boolean(notes.trim()),
       });
-      await prisma.resume
-        .upsert({
-          where: { profileId_jobId: { profileId, jobId } },
-          create: {
-            profileId, jobId, jobTitle: job.title, jobCompany: job.company,
-            data: mocked, model: 'mock',
-          },
-          update: { data: mocked, model: 'mock', jobTitle: job.title, jobCompany: job.company },
-        })
-        .catch((err: unknown) =>
-          logger.error('Could not save mock resume', { jobId, profileId, err: String(err) }));
-      return mocked;
+      // Rehearse the real timeline when asked, so the waiting UI is exercised.
+      if (env.AI_MOCK_DELAY_MS > 0) {
+        await new Promise((r) => setTimeout(r, env.AI_MOCK_DELAY_MS));
+      }
+      const savedMock = await saveResume({
+        profileId, jobId, ownerId, job, data: mocked, model: 'mock',
+      });
+      return { ...mocked, saved: savedMock };
     }
 
     // Only include the notes section when there is something in it. An empty
@@ -252,26 +379,14 @@ Produce the tailored resume now.`;
       throw new ResumeInputError('Generation did not return a usable resume. Try again.', 502);
     }
 
-    // Upsert, not insert: one resume per (profile, job). Regenerating replaces
-    // the previous draft rather than accumulating rows nothing reads.
-    await prisma.resume
-      .upsert({
-        where: { profileId_jobId: { profileId, jobId } },
-        create: {
-          profileId,
-          jobId,
-          jobTitle: job.title,
-          jobCompany: job.company,
-          data: res.parsed_output,
-          model: MODEL,
-        },
-        update: { data: res.parsed_output, model: MODEL, jobTitle: job.title, jobCompany: job.company },
-      })
-      .catch((err: unknown) => {
-        // A save failure must not lose the resume the user just waited for —
-        // it is already in the response. Log and carry on.
-        logger.error('Could not save generated resume', { jobId, profileId, err: String(err) });
-      });
+    // A save failure must not lose the resume the user just waited for — it is
+    // already in the response — but the outcome travels with it so the caller
+    // does not present an unsaved draft as stored.
+    const saved = await saveResume({
+      profileId, jobId, ownerId, job,
+      data: res.parsed_output as object,
+      model: MODEL,
+    });
 
     logger.info('Resume generated', {
       jobId,
@@ -280,6 +395,6 @@ Produce the tailored resume now.`;
       gaps: res.parsed_output.gaps.length,
       reviewNotes: res.parsed_output.reviewNotes.length,
     });
-    return res.parsed_output;
+    return { ...res.parsed_output, saved };
   },
 };

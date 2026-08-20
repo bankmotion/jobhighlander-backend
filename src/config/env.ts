@@ -15,6 +15,15 @@ const schema = z.object({
   // Dev-only escape hatch: return a canned resume instead of calling Anthropic,
   // so the UI can be exercised without API credits. Ignored in production.
   AI_MOCK: z.preprocess((v) => v === '1' || v === 'true', z.boolean()).default(false),
+  /**
+   * Artificial delay for AI_MOCK generations, in ms.
+   *
+   * A real generation takes 20-60s; the mock returns in under a millisecond.
+   * Every piece of UI built for that wait — progress, elapsed time, closing the
+   * dialog and letting it finish, concurrent runs — is untestable against an
+   * instant mock. Set this to ~30000 to rehearse the real timeline.
+   */
+  AI_MOCK_DELAY_MS: z.coerce.number().int().min(0).max(120_000).default(0),
   ANTHROPIC_API_KEY: z.preprocess(
     (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
     z.string().min(1).optional(),

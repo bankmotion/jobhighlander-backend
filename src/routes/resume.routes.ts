@@ -69,25 +69,76 @@ resumeRouter.post('/templates/default', requireAuth, async (req: AuthedRequest, 
   }
 });
 
-const savedQuerySchema = zod.object({
+const pairingSchema = zod.object({
   jobId: zod.coerce.number().int().positive(),
   profileId: zod.coerce.number().int().positive(),
 });
 
 /**
- * GET /api/resumes/saved?jobId=&profileId= — the previously generated draft.
- *
- * 204 rather than 404 when there is none: "you have not generated one yet" is a
- * normal state for this endpoint, not a client error, and the UI branches on it
- * every single page load.
+ * GET /api/resumes/saved?jobId=&profileId= — the one resume stored for this
+ * pairing, or null. Having none is the normal state before the first
+ * generation, so it is a 200 with null rather than a 404.
  */
 resumeRouter.get('/saved', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
-    const parsed = savedQuerySchema.safeParse(req.query);
+    const parsed = pairingSchema.safeParse(req.query);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
-    const row = await resumeService.saved(parsed.data.jobId, parsed.data.profileId, req.user!.id);
-    if (!row) return res.status(204).end();
-    res.json(row);
+    res.json(await resumeService.saved(parsed.data.jobId, parsed.data.profileId, req.user!.id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * The list page asks about a whole page of jobs at once. Bounded at 100 to match
+ * the `pageSize` ceiling on GET /api/jobs — without a cap this is an unbounded
+ * `IN (...)` driven straight from the query string.
+ */
+const statusQuerySchema = zod.object({
+  profileId: zod.coerce.number().int().positive(),
+  jobIds: zod
+    .string()
+    .trim()
+    .min(1)
+    .transform((s) => s.split(',').map((v) => Number(v.trim())))
+    .pipe(zod.array(zod.number().int().positive()).min(1).max(100)),
+});
+
+/**
+ * GET /api/resumes/status?profileId=&jobIds=1,2,3 — which of these jobs already
+ * have a resume, keyed by job id. Jobs with none are simply absent.
+ */
+resumeRouter.get('/status', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
+  try {
+    const parsed = statusQuerySchema.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
+    const { profileId, jobIds } = parsed.data;
+    res.json(await resumeService.statusFor(jobIds, profileId, req.user!.id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+const applyTemplateSchema = pairingSchema.extend({
+  templateKey: zod.string().trim().min(1).max(64),
+});
+
+/**
+ * POST /api/resumes/template — apply a template to the saved resume.
+ *
+ * Selecting a template in the UI only re-renders the preview; this is the
+ * explicit Apply, and the only thing that writes the choice to the database.
+ */
+resumeRouter.post('/template', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
+  try {
+    const parsed = applyTemplateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid request' });
+    const { jobId, profileId, templateKey } = parsed.data;
+    const ok = await resumeService.setTemplate(jobId, profileId, req.user!.id, templateKey);
+    // Either there is no saved resume for this pairing, it is not yours, or the
+    // template does not exist; all three are a 404 so nothing is confirmed.
+    if (!ok) return res.status(404).json({ error: 'Resume or template not found' });
+    res.json({ ok: true, templateKey });
   } catch (err) {
     next(err);
   }
