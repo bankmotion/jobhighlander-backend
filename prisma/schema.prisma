@@ -45,6 +45,7 @@ model Job {
 
   resumes      Resume[]
   applications JobApplication[]
+  discards     JobDiscard[]
   coverLetters CoverLetter[]
 
   @@unique([site, siteJobId], name: "site_siteJobId")
@@ -178,6 +179,10 @@ model User {
   /// users, so the marker records WHO, not just that someone did.
   applicationsMarked JobApplication[] @relation("ApplicationMarkedBy")
 
+  /// "Discarded" marks this user put on a job, same reasoning as above:
+  /// a shared profile has several users, so the row records WHO dismissed it.
+  discardsMarked     JobDiscard[]     @relation("DiscardMarkedBy")
+
   /// Prompts this super admin last edited.
   promptsEdited Prompt[]
 
@@ -234,6 +239,7 @@ model Profile {
   resumes         Resume[]
   invitations     ProfileInvitation[]
   applications    JobApplication[]
+  discards        JobDiscard[]
   coverLetters    CoverLetter[]
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -403,6 +409,45 @@ model JobApplication {
   @@unique([profileId, jobId])
   @@index([jobId])
   @@map("job_applications")
+}
+
+/// "Not for this candidate" — one per (profile, job).
+///
+/// Deliberately shaped exactly like JobApplication, because it is the same kind
+/// of fact: a judgement a person made about a posting for one profile, which
+/// the app cannot observe for itself and therefore must be able to undo.
+///
+/// PER PROFILE, not per user. The same posting is a fair fit for one candidate
+/// and wrong for the next, so discarding it while looking at one profile must
+/// not hide it from the others — the pairing is what carries the meaning.
+model JobDiscard {
+  id Int @id @default(autoincrement())
+
+  profileId Int     @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  jobId Int? @map("job_id")
+  job   Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  /// Denormalised so the record still reads once its job row is gone.
+  jobTitle   String  @map("job_title") @db.VarChar(512)
+  jobCompany String? @map("job_company") @db.VarChar(255)
+
+  /// When it was dismissed. Separate from createdAt for the same reason
+  /// `appliedAt` is: the judgement has its own date, the row has another.
+  discardedAt DateTime @default(now()) @map("discarded_at")
+
+  /// Which member of a shared profile dismissed it.
+  discardedById Int  @map("discarded_by_id")
+  discardedBy   User @relation("DiscardMarkedBy", fields: [discardedById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// One marker per pairing: discarding twice is idempotent, not a second row.
+  @@unique([profileId, jobId])
+  @@index([jobId])
+  @@map("job_discards")
 }
 
 /// One cover letter, tailored to one job posting for one profile.

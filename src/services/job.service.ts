@@ -6,6 +6,9 @@ const JOB_SITES = new Set<string>(Object.values(JobSite));
 /** Which side of the applied line to keep. `all` applies no filter. */
 export type AppliedFilter = 'all' | 'applied' | 'unapplied';
 
+/** Which side of the discarded line to keep. `all` applies no filter. */
+export type DiscardedFilter = 'all' | 'discarded' | 'undiscarded';
+
 export interface ListJobsParams {
   /** Filter to these sites (OR). Empty/undefined = all sites. */
   sites?: string[];
@@ -21,6 +24,15 @@ export interface ListJobsParams {
    * meaningless and is ignored rather than guessed at.
    */
   applied?: AppliedFilter;
+  /**
+   * Keep only jobs this profile has (or has not) discarded.
+   *
+   * Per PROFILE for the same reason `applied` is, and ignored without one.
+   * Independent of `applied`: "not discarded and not applied" is the shortlist
+   * someone actually works from, so the two filters compose rather than
+   * collapsing into one three-state control.
+   */
+  discarded?: DiscardedFilter;
   profileId?: number;
   page: number;
   pageSize: number;
@@ -31,7 +43,7 @@ export interface ListJobsParams {
  */
 export const jobService = {
   async list(params: ListJobsParams) {
-    const { sites, remote, location, q, applied, profileId, page, pageSize } = params;
+    const { sites, remote, location, q, applied, discarded, profileId, page, pageSize } = params;
 
     const validSites = (sites ?? []).filter((s) => JOB_SITES.has(s)) as JobSite[];
 
@@ -52,11 +64,23 @@ export const jobService = {
           ? { applications: { some: { profileId } } }
           : { applications: { none: { profileId } } };
 
+    /**
+     * Discarded is filtered in SQL for the same reason applied is: trimming the
+     * page in JavaScript would leave `total` counting rows the user cannot see.
+     */
+    const discardedWhere: Prisma.JobWhereInput =
+      !profileId || !discarded || discarded === 'all'
+        ? {}
+        : discarded === 'discarded'
+          ? { discards: { some: { profileId } } }
+          : { discards: { none: { profileId } } };
+
     const where: Prisma.JobWhereInput = {
       ...(validSites.length ? { site: { in: validSites } } : {}),
       ...(remote ? { remote: true } : {}),
       ...(location ? { location: { contains: location } } : {}),
       ...appliedWhere,
+      ...discardedWhere,
       ...(q
         ? {
             OR: [
