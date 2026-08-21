@@ -66,6 +66,7 @@ enum JobSite {
   findmyremote
   jobicy
   themuse
+  linkedin
 }
 
 /// The scrapers' staging table. Structurally a copy of `jobs`, written by
@@ -119,6 +120,7 @@ enum JobSiteTemp {
   findmyremote
   jobicy
   themuse
+  linkedin
 }
 
 /// One scraper run — logged by the Python scrapers so super-admins can see when
