@@ -76,13 +76,34 @@ export const applicationService = {
     return this.get(jobId, profileId, userId);
   },
 
-  /** Undo a mark. Returns false when there was nothing to undo. */
+  /**
+   * Undo a mark. Returns false when there was nothing to undo.
+   *
+   * REFUSES while an interview timeline exists for this pairing. `interviews`
+   * has no foreign key to this table — deliberately, so that a mis-click here
+   * cannot cascade an entire interview history into nothing — which leaves
+   * this check as the thing that keeps the two consistent. Un-applying a job
+   * you are actively interviewing for is a slip in every realistic case, and
+   * the timeline is the expensive half of the pair to lose.
+   */
   async unmark(jobId: number, profileId: number, userId: number): Promise<boolean> {
     const profile = await prisma.profile.findFirst({
       where: { id: profileId, ...usableProfileWhere(userId) },
       select: { id: true },
     });
     if (!profile) throw new ApplicationError('Profile not found', 404);
+
+    const interview = await prisma.interview.findUnique({
+      where: { profileId_jobId: { profileId, jobId } },
+      select: { id: true },
+    });
+    if (interview) {
+      throw new ApplicationError(
+        'This job has an interview timeline — delete that first to un-apply',
+        409,
+      );
+    }
+
     const r = await prisma.jobApplication.deleteMany({ where: { jobId, profileId } });
     return r.count > 0;
   },

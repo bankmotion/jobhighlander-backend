@@ -47,6 +47,7 @@ model Job {
   applications JobApplication[]
   discards     JobDiscard[]
   coverLetters CoverLetter[]
+  interviews   Interview[]
 
   @@unique([site, siteJobId], name: "site_siteJobId")
   /// The real duplicate guard. Nullable so a row whose fingerprint could not be
@@ -183,7 +184,11 @@ model User {
 
   /// "Discarded" marks this user put on a job, same reasoning as above:
   /// a shared profile has several users, so the row records WHO dismissed it.
-  discardsMarked     JobDiscard[]     @relation("DiscardMarkedBy")
+  discardsMarked JobDiscard[] @relation("DiscardMarkedBy")
+
+  /// Interview timelines this user opened, same reasoning as the two above:
+  /// a shared profile has several users, so the row records WHO started it.
+  interviewsOpened Interview[] @relation("InterviewOpenedBy")
 
   /// Prompts this super admin last edited.
   promptsEdited Prompt[]
@@ -243,6 +248,7 @@ model Profile {
   applications    JobApplication[]
   discards        JobDiscard[]
   coverLetters    CoverLetter[]
+  interviews      Interview[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -332,7 +338,7 @@ model Education {
   /// reading the way they were entered; the editor offers "year" for new ones.
   datePrecision String @default("month") @map("date_precision") @db.VarChar(8)
 
-  sortOrder  Int       @default(0) @map("sort_order")
+  sortOrder Int @default(0) @map("sort_order")
 
   @@index([profileId])
   @@map("educations")
@@ -650,4 +656,202 @@ model AiUsage {
   @@index([createdAt])
   @@index([userId])
   @@map("ai_usage")
+}
+
+/// An interview stage badge — "Intro", "Live Coding", "Culture Fit"…
+///
+/// A TABLE, NOT AN ENUM. Every company assembles its own loop and invents its
+/// own names for the rounds, so the list has to be editable by a super admin
+/// without a migration and a redeploy. That is the whole reason this is not
+/// `enum InterviewStage`.
+///
+/// `archived` rather than deleted, for the same reason `TemplatePreset` carries
+/// it: steps point at these rows, and a badge that vanished mid-process would
+/// either block the delete or leave a step wearing nothing. The service deletes
+/// only a type no step has ever used, and archives every other one.
+model InterviewStageType {
+  id   Int    @id @default(autoincrement())
+  key  String @unique @db.VarChar(64)
+  name String @db.VarChar(80)
+
+  /// CSS colour for the badge, e.g. "#6c5cff". Applied as an inline style, not
+  /// a utility class: Tailwind v4 scans source statically, so a composed
+  /// `bg-${color}-500` compiles to no CSS at all — silently, with no build
+  /// error. Same trap `TemplatePreset.accent` documents.
+  color String @default("#6c5cff") @db.VarChar(16)
+
+  sortOrder Int     @default(0) @map("sort_order")
+  archived  Boolean @default(false)
+
+  steps InterviewStepStage[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([archived, sortOrder])
+  @@map("interview_stage_types")
+}
+
+/// One interview process — everything that happens after a job says yes.
+///
+/// Keyed on (profile, job) like `JobApplication` and `Resume`, and for the same
+/// reason: two bidders working different profiles run different processes, and
+/// a shared profile's whole team has to see the same timeline.
+///
+/// DELIBERATELY NOT A FOREIGN KEY TO `job_applications`. The UI only offers to
+/// open a timeline on a job already marked applied, and `interviewService.open`
+/// enforces that — but as a GUARD AT CREATION, not as a structural dependency.
+/// An FK would mean one mis-click on "undo applied" cascades away an entire
+/// interview history; instead `applicationService.unmark` refuses while a
+/// timeline exists and says why.
+///
+/// `jobId` nullable with onDelete: SetNull and the title/company denormalised,
+/// exactly as `Resume` and `JobApplication` do it: jobs are re-scraped and
+/// pruned routinely, and this is hand-entered history a maintenance delete must
+/// not take with it.
+model Interview {
+  id Int @id @default(autoincrement())
+
+  profileId Int     @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  jobId Int? @map("job_id")
+  job   Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  /// Denormalised so the timeline still names its employer once the job is gone.
+  jobTitle   String  @map("job_title") @db.VarChar(512)
+  jobCompany String? @map("job_company") @db.VarChar(255)
+
+  status InterviewStatus @default(active)
+
+  /// Bumped on every step and panel write. Drives the "no movement in three
+  /// weeks — probably ghosted" flag, which is a real and common outcome that
+  /// no employer will ever tell you about explicitly.
+  lastActivityAt DateTime @default(now()) @map("last_activity_at")
+
+  /// Which member of a shared profile opened it, same as `JobApplication`.
+  openedById Int  @map("opened_by_id")
+  openedBy   User @relation("InterviewOpenedBy", fields: [openedById], references: [id], onDelete: Cascade)
+
+  steps InterviewStep[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([profileId, jobId])
+  @@index([jobId])
+  @@index([status, lastActivityAt])
+  @@map("interviews")
+}
+
+enum InterviewStatus {
+  active
+  offer
+  accepted
+  rejected
+  withdrawn
+  ghosted
+  on_hold
+}
+
+/// One node on the timeline: a stage of the process.
+///
+/// A step wears one or more badges (`stages`) and holds one or more cards
+/// (`panels`). Two badges on one step is not a corner case — "tech + live
+/// coding in the same 90 minutes" is how most companies actually schedule it,
+/// and forcing that into two steps would invent a gap that never happened.
+///
+/// There is NO date column. The marker on the rail is derived from the earliest
+/// `scheduledAt` among this step's panels. Every panel field is optional, so a
+/// step may legitimately have no date at all — and showing `createdAt` there
+/// instead would put a confident, wrong date on the timeline.
+model InterviewStep {
+  id          Int       @id @default(autoincrement())
+  interviewId Int       @map("interview_id")
+  interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+
+  title  String?    @db.VarChar(255)
+  result StepResult @default(pending)
+
+  /// Contiguous from 0, renumbered across siblings in one transaction on every
+  /// insert. Gap numbering would avoid the rewrite, but a timeline is five to
+  /// ten steps — the rewrite is free at that size, and contiguous ordering
+  /// never runs out of room between two neighbours the way gaps eventually do.
+  sortOrder Int @map("sort_order")
+
+  stages InterviewStepStage[]
+  panels InterviewPanel[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([interviewId, sortOrder])
+  @@map("interview_steps")
+}
+
+enum StepResult {
+  pending
+  passed
+  failed
+  cancelled
+}
+
+/// Which badges a step wears. A plain join table, ordered so the badges render
+/// in the order they were attached rather than by id.
+model InterviewStepStage {
+  id Int @id @default(autoincrement())
+
+  stepId Int           @map("step_id")
+  step   InterviewStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+  stageTypeId Int                @map("stage_type_id")
+  stageType   InterviewStageType @relation(fields: [stageTypeId], references: [id], onDelete: Cascade)
+
+  sortOrder Int @default(0) @map("sort_order")
+
+  /// A badge is on a step or it is not; attaching twice is not two badges.
+  @@unique([stepId, stageTypeId])
+  @@index([stageTypeId])
+  @@map("interview_step_stages")
+}
+
+/// One card inside a step — a single sitting, or a note about one.
+///
+/// EVERY FIELD IS OPTIONAL, by design. A panel gets created the moment an email
+/// arrives, when all you know is "they want to talk next week"; the link, the
+/// time and the notes land later. A required field here would mean inventing
+/// data to get past a form, which is worse than an empty card.
+model InterviewPanel {
+  id     Int           @id @default(autoincrement())
+  stepId Int           @map("step_id")
+  step   InterviewStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+  title      String? @db.VarChar(255)
+  note       String? @db.Text
+  meetingUrl String? @map("meeting_url") @db.VarChar(2048)
+
+  /// The instant, in UTC. Paired with `timezone` below and useless without it.
+  scheduledAt DateTime? @map("scheduled_at")
+
+  /// The IANA zone the invitation was written in ("America/New_York").
+  ///
+  /// STORED, NOT DERIVED. `scheduledAt` alone pins the instant, which is enough
+  /// to sort by and to alarm on, but it cannot reproduce the sentence the
+  /// recruiter actually wrote. Rendering "2:00 PM EST" back as "7:00 PM" and
+  /// nothing else is how a candidate joins an hour late while believing the
+  /// dashboard — so both readings are kept and both are shown.
+  timezone String? @db.VarChar(64)
+
+  durationMin Int? @map("duration_min")
+
+  /// Contiguous from 0 within the step; see `InterviewStep.sortOrder`.
+  sortOrder Int @map("sort_order")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([stepId, sortOrder])
+  /// The cross-process "next 7 days" agenda reads this alone.
+  @@index([scheduledAt])
+  @@map("interview_panels")
 }

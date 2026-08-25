@@ -14,6 +14,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "seed:prompts": "tsx src/scripts/seed-prompts.ts",
+    "seed:stage-types": "tsx src/scripts/seed-stage-types.ts",
     "seed:demo": "tsx src/scripts/seed-demo.ts",
     "seed:demo:clear": "tsx src/scripts/seed-demo.ts --clear"
   },
