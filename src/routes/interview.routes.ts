@@ -66,9 +66,28 @@ const meetingUrl = z
   .max(2048)
   .refine((v) => /^https?:\/\//i.test(v), { message: 'Link must start with http:// or https://' });
 
+/**
+ * Note length cap, in CHARACTERS — 16,000, roughly six pages.
+ *
+ * The column is MySQL `TEXT`, which is capped at 65,535 BYTES, not characters,
+ * and the table is utf8mb4 where one character costs up to four bytes. So the
+ * safe character limit is 65535/4 ≈ 16,383, not the 65,535 the column length
+ * suggests.
+ *
+ * This previously read 20_000. That is fine for ASCII and fails only once a
+ * long note contains enough non-Latin text or emoji to push past 65,535 bytes,
+ * at which point MySQL in strict mode rejects the write and the user loses the
+ * note they just typed. Capping below the byte ceiling makes the limit hold for
+ * any content rather than for English only.
+ *
+ * `frontend/app/components/interview-panel-modal.tsx` hard-stops the textarea
+ * at the same number — keep the two in step.
+ */
+const NOTE_MAX_CHARS = 16_000;
+
 const panelBody = z.object({
   title: z.string().trim().max(255).nullable().optional(),
-  note: z.string().max(20_000).nullable().optional(),
+  note: z.string().max(NOTE_MAX_CHARS).nullable().optional(),
   meetingUrl: meetingUrl.nullable().optional(),
   /** ISO-8601 with an offset; the service stores the instant as UTC. */
   scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
