@@ -29,12 +29,26 @@ const workSchema = z.object({
   endDate: dateStr,
 });
 
+/**
+ * Education is collected at YEAR granularity, so 'YYYY' is what the editor
+ * sends. The month/day forms stay accepted because rows written before that
+ * change still hold them, and a PUT that echoes a profile back must not be
+ * rejected for faithfully returning what it was given.
+ */
+const yearStr = z
+  .string()
+  .regex(/^\d{4}(-\d{2}(-\d{2})?)?$/, 'expected YYYY')
+  .nullish();
+
 const eduSchema = z.object({
   university: z.string().max(255).nullish(),
   location: z.string().max(255).nullish(),
   degree: z.string().max(255).nullish(),
-  startDate: dateStr,
-  endDate: dateStr,
+  startDate: yearStr,
+  endDate: yearStr,
+  /** Whether this entry's dates mean a year or a month. Optional so an older
+   *  client that never sends it keeps the month behaviour it already had. */
+  datePrecision: z.enum(['year', 'month']).nullish(),
 });
 
 const profileSchema = z.object({

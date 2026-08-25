@@ -42,6 +42,25 @@ export function periodOf(start: Date | null, end: Date | null): string {
   return `${start ? fmt(start) : '?'} – ${end ? fmt(end) : 'Present'}`;
 }
 
+/**
+ * A period at YEAR granularity, for education.
+ *
+ * Degrees are awarded by year, not by month — "Sep 2018 – May 2022" claims a
+ * precision nobody puts on a resume and that the profile no longer collects.
+ * Work experience keeps months, where the exact span does matter.
+ *
+ * Reads the stored DATE in UTC. Education dates are written as YYYY-01-01, and
+ * `getFullYear()` on a local timezone west of UTC would render that as the
+ * previous year.
+ */
+export function yearsOf(start: Date | null, end: Date | null): string {
+  if (!start && !end) return '';
+  const y = (d: Date) => String(d.getUTCFullYear());
+  // A single-year entry reads as one year, not "2022 – 2022".
+  if (start && end && start.getUTCFullYear() === end.getUTCFullYear()) return y(start);
+  return `${start ? y(start) : '?'} – ${end ? y(end) : 'Present'}`;
+}
+
 
 
 

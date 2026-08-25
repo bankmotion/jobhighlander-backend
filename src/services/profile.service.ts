@@ -1,9 +1,17 @@
 import { prisma } from '../lib/prisma';
 
-/** Month-granularity date. Accepts 'YYYY-MM' or 'YYYY-MM-DD'; null = open/Present. */
+/**
+ * Accepts 'YYYY' (education), 'YYYY-MM' (work) or 'YYYY-MM-DD'; null =
+ * open/Present.
+ *
+ * A bare year widens to January 1st. The column stays a DATE, so year-only
+ * entries are stored as YYYY-01-01 and read back through `yearsOf`, which
+ * prints only the year — no migration, and nothing re-interprets the day part
+ * as meaningful.
+ */
 function toDate(s?: string | null): Date | null {
   if (!s) return null;
-  const iso = /^\d{4}-\d{2}$/.test(s) ? `${s}-01` : s;
+  const iso = /^\d{4}$/.test(s) ? `${s}-01-01` : /^\d{4}-\d{2}$/.test(s) ? `${s}-01` : s;
   const d = new Date(`${iso}T00:00:00Z`);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -25,6 +33,9 @@ export interface EduInput {
   degree?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  /** 'year' or 'month'. Absent = 'month', which is how rows read before the
+   *  choice existed. */
+  datePrecision?: string | null;
 }
 export interface ProfileInput {
   email?: string | null;
@@ -47,14 +58,22 @@ const mapWork = (list: WorkExpInput[] = []) =>
   }));
 
 const mapEdu = (list: EduInput[] = []) =>
-  list.map((e, i) => ({
-    university: clean(e.university),
-    location: clean(e.location),
-    degree: clean(e.degree),
-    startDate: toDate(e.startDate),
-    endDate: toDate(e.endDate),
-    sortOrder: i,
-  }));
+  list.map((e, i) => {
+    const datePrecision = e.datePrecision === 'year' ? 'year' : 'month';
+    // A year-precision entry is stored as YYYY-01-01 even when the caller sent
+    // a month. Keeping a month nothing will render and nobody can edit leaves a
+    // value in the table that can only mislead whoever reads it next.
+    const at = (v?: string | null) => toDate(datePrecision === 'year' ? (v ? v.slice(0, 4) : null) : v);
+    return {
+      university: clean(e.university),
+      location: clean(e.location),
+      degree: clean(e.degree),
+      startDate: at(e.startDate),
+      endDate: at(e.endDate),
+      datePrecision,
+      sortOrder: i,
+    };
+  });
 
 const profileFields = (input: ProfileInput) => ({
   email: clean(input.email),

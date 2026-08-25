@@ -5,7 +5,7 @@ import { logger } from './logger.service';
 import { promptService } from './prompt.service';
 import { aiUsageService } from './aiUsage.service';
 import { usableProfileWhere } from './profile.service';
-import { saveResume, ResumeInputError, periodOf, profileIdentity } from './resume.service';
+import { saveResume, ResumeInputError, periodOf, yearsOf, profileIdentity } from './resume.service';
 import { assembleLetter, coverLetterService, type StoredCoverLetter } from './coverLetter.service';
 import { applicationDraftSchema, type ApplicationRequest } from '../schemas/generation.schema';
 import type { TailoredResume } from '../schemas/resume.schema';
@@ -92,7 +92,7 @@ export const generationService = {
       .map((w) => `- ${w.company ?? '(company not recorded)'}${w.location ? `, ${w.location}` : ''} — ${periodOf(w.startDate, w.endDate)}`)
       .join('\n');
     const education = profile.educations
-      .map((e) => `- ${[e.degree, e.university].filter(Boolean).join(', ')}${e.location ? ` (${e.location})` : ''} — ${periodOf(e.startDate, e.endDate)}`)
+      .map((e) => `- ${[e.degree, e.university].filter(Boolean).join(', ')}${e.location ? ` (${e.location})` : ''} — ${e.datePrecision === 'year' ? yearsOf(e.startDate, e.endDate) : periodOf(e.startDate, e.endDate)}`)
       .join('\n');
 
     // Only include the notes section when there is something in it. An empty

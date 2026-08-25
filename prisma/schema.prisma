@@ -320,6 +320,18 @@ model Education {
   degree     String?   @db.VarChar(255)
   startDate  DateTime? @map("start_date") @db.Date
   endDate    DateTime? @map("end_date") @db.Date
+
+  /// How precise the dates above are: "year" or "month".
+  ///
+  /// Stored rather than inferred, because the column is a DATE and a year-only
+  /// entry lands on YYYY-01-01 — which is indistinguishable from someone who
+  /// genuinely started in January. Without this flag, "2012" and "January 2012"
+  /// are the same row, and every render has to guess which the person meant.
+  ///
+  /// Defaults to "month" so the rows written before the choice existed keep
+  /// reading the way they were entered; the editor offers "year" for new ones.
+  datePrecision String @default("month") @map("date_precision") @db.VarChar(8)
+
   sortOrder  Int       @default(0) @map("sort_order")
 
   @@index([profileId])
