@@ -8,6 +8,7 @@ import { usableProfileWhere } from './profile.service';
 import { saveResume, ResumeInputError, periodOf, yearsOf, profileIdentity } from './resume.service';
 import { assembleLetter, coverLetterService, type StoredCoverLetter } from './coverLetter.service';
 import { applicationDraftSchema, type ApplicationRequest } from '../schemas/generation.schema';
+import { sanitizeResume, sanitizeLetter } from '../resume/sanitize';
 import type { TailoredResume } from '../schemas/resume.schema';
 
 /**
@@ -88,6 +89,27 @@ export const generationService = {
 
     const { name, contact } = profileIdentity(profile);
 
+    /**
+     * Years of work, computed here rather than left to the model.
+     *
+     * Asked to derive it, the model returned "4+", then "six", then "four" for
+     * the same unchanged history across three runs. It is arithmetic over dates
+     * we already hold, so it belongs in code and travels to the model as a
+     * fixed fact alongside the employers and the dates.
+     *
+     * Earliest start to latest end, an open end meaning today, rounded DOWN so
+     * the figure is never more than the dates support.
+     */
+    const spans = profile.workExperiences.filter((w) => w.startDate);
+    const earliest = spans.length ? Math.min(...spans.map((w) => w.startDate!.getTime())) : null;
+    const latest = spans.length
+      ? Math.max(...spans.map((w) => (w.endDate ?? new Date()).getTime()))
+      : null;
+    const yearsOfWork =
+      earliest !== null && latest !== null && latest > earliest
+        ? Math.floor((latest - earliest) / (365.25 * 24 * 60 * 60 * 1000))
+        : 0;
+
     const employment = profile.workExperiences
       .map((w) => `- ${w.company ?? '(company not recorded)'}${w.location ? `, ${w.location}` : ''} — ${periodOf(w.startDate, w.endDate)}`)
       .join('\n');
@@ -116,6 +138,10 @@ Contact: ${contact || '(not recorded)'}
 
 Employment history — employers and dates are FIXED FACTS, never alter them:
 ${employment || '(none recorded)'}
+
+Total years of work: ${yearsOfWork || '(not derivable)'}
+This figure is computed from the dates above and is a FIXED FACT. State it in
+the summary as a word ("six years"). Do not recompute it and do not round it up.
 
 Education — fixed facts:
 ${education || '(none recorded)'}
@@ -176,7 +202,13 @@ Produce the tailored resume and the cover letter paragraphs now.`;
       throw new ResumeInputError('Generation did not return a usable application. Try again.', 502);
     }
 
-    const { resume, coverLetter } = res.parsed_output;
+    // Spell out "50K+" as "over 50K" before anything is persisted or rendered.
+    // The prompt asks for this and the model mostly complies; this is what makes
+    // it certain, and it runs before BOTH documents so the two cannot disagree.
+    const { resume } = sanitizeResume(res.parsed_output);
+    // The letter goes through a STRICTER pass: it is pasted into an email as
+    // plain text, so it keeps no tags at all, while the resume keeps its <b>.
+    const coverLetter = sanitizeLetter(res.parsed_output.coverLetter);
 
     // Persist both. A save failure must not lose work the user just waited for,
     // so `saveResume` reports rather than throws and the flag travels with the

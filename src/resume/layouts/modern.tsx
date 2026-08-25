@@ -1,4 +1,5 @@
 import type { TemplateProps } from './types';
+import { Rich } from '../rich';
 import { groupSkills } from '../skills';
 
 /**
@@ -23,7 +24,7 @@ export function ModernLayout({ resume, name, contact }: TemplateProps) {
       {resume.summary && (
         <section>
           <h2>Summary</h2>
-          <p>{resume.summary}</p>
+          <p><Rich text={resume.summary} /></p>
         </section>
       )}
 
@@ -43,9 +44,14 @@ export function ModernLayout({ resume, name, contact }: TemplateProps) {
               {e.bullets.length > 0 && (
                 <ul>
                   {e.bullets.map((b, j) => (
-                    <li key={j}>{b.text}</li>
+                    <li key={j}><Rich text={b.text} /></li>
                   ))}
                 </ul>
+              )}
+              {e.impact && (
+                <p className="impact">
+                  <strong>Impact:</strong> <Rich text={e.impact} />
+                </p>
               )}
             </article>
           ))}
@@ -72,7 +78,9 @@ export function ModernLayout({ resume, name, contact }: TemplateProps) {
                 <span className="role">{ed.degree}</span>
                 <span className="period">{ed.period}</span>
               </div>
-              {ed.institution && <p className="org">{ed.institution}</p>}
+              {(ed.institution || ed.location) && (
+                <p className="org">{[ed.institution, ed.location].filter(Boolean).join(' · ')}</p>
+              )}
             </article>
           ))}
         </section>
@@ -139,4 +147,7 @@ export const MODERN_CSS = `
   /* Wide word-spacing rather than a bullet character: a separator glyph is one
      more thing a parser can mangle, and the gap reads the same. */
   .skills { word-spacing: 6px; }
+  /* The judgement line. Set apart from the bullets by colour and size,
+     not by a rule or a box, so extraction still reads it as a sentence. */
+  .impact { margin: 4px 0 0; font-size: 9.5pt; color: #444; }
 `;

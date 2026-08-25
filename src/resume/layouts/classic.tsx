@@ -1,4 +1,5 @@
 import type { TemplateProps } from './types';
+import { Rich } from '../rich';
 import { groupSkills } from '../skills';
 
 export type { TemplateProps };
@@ -32,7 +33,7 @@ export function ClassicLayout({ resume, name, contact }: TemplateProps) {
       {resume.summary && (
         <section>
           <h2>Summary</h2>
-          <p>{resume.summary}</p>
+          <p><Rich text={resume.summary} /></p>
         </section>
       )}
 
@@ -66,9 +67,14 @@ export function ClassicLayout({ resume, name, contact }: TemplateProps) {
               {e.bullets.length > 0 && (
                 <ul>
                   {e.bullets.map((b, j) => (
-                    <li key={j}>{b.text}</li>
+                    <li key={j}><Rich text={b.text} /></li>
                   ))}
                 </ul>
+              )}
+              {e.impact && (
+                <p className="impact">
+                  <strong>Impact:</strong> <Rich text={e.impact} />
+                </p>
               )}
             </article>
           ))}
@@ -87,6 +93,7 @@ export function ClassicLayout({ resume, name, contact }: TemplateProps) {
                 </span>
                 <span className="period">{ed.period}</span>
               </div>
+              {ed.location && <p className="loc">{ed.location}</p>}
             </article>
           ))}
         </section>
@@ -164,6 +171,9 @@ export const CLASSIC_CSS = `
   .role { font-weight: 700; }
   .period { font-size: 9.5pt; color: #333; white-space: nowrap; }
   .loc { margin: 1px 0 0; font-size: 9.5pt; color: #444; }
+  /* The judgement line. Set apart from the bullets by colour and size,
+     not by a rule or a box, so extraction still reads it as a sentence. */
+  .impact { margin: 4px 0 0; font-size: 9.5pt; color: #444; }
 
   ul { margin: 4px 0 0; padding-left: 18px; }
   li { margin-bottom: 2px; }
