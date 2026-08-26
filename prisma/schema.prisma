@@ -48,6 +48,7 @@ model Job {
   discards     JobDiscard[]
   coverLetters CoverLetter[]
   interviews   Interview[]
+  aiQueries    JobAiQuery[]
 
   @@unique([site, siteJobId], name: "site_siteJobId")
   /// The real duplicate guard. Nullable so a row whose fingerprint could not be
@@ -190,6 +191,9 @@ model User {
   /// a shared profile has several users, so the row records WHO started it.
   interviewsOpened Interview[] @relation("InterviewOpenedBy")
 
+  /// Questions this user asked the model about a posting.
+  aiQueriesAsked JobAiQuery[] @relation("AiQueryAskedBy")
+
   /// Prompts this super admin last edited.
   promptsEdited Prompt[]
 
@@ -249,6 +253,7 @@ model Profile {
   discards        JobDiscard[]
   coverLetters    CoverLetter[]
   interviews      Interview[]
+  aiQueries       JobAiQuery[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -854,4 +859,56 @@ model InterviewPanel {
   /// The cross-process "next 7 days" agenda reads this alone.
   @@index([scheduledAt])
   @@map("interview_panels")
+}
+
+/// One question a user asked the model about one posting, with its answer.
+///
+/// A LOG, NOT A CONVERSATION. Each row is a self-contained question answered
+/// against the candidate record, the posting, and whatever documents existed at
+/// the time — earlier answers are not fed back in. That keeps every row
+/// re-readable on its own months later, and keeps the cost of a question flat
+/// instead of growing with the length of the thread.
+///
+/// Keyed to a PROFILE, like `Resume` and `JobApplication`: the questions worth
+/// asking about a posting depend on whose history is being matched against it,
+/// and a shared profile's team should see the same log rather than each keeping
+/// a private one.
+model JobAiQuery {
+  id Int @id @default(autoincrement())
+
+  profileId Int     @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  jobId Int? @map("job_id")
+  job   Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  /// Denormalised so the log still names its posting once the job row is gone,
+  /// exactly as `Resume` and `CoverLetter` do it.
+  jobTitle   String  @map("job_title") @db.VarChar(512)
+  jobCompany String? @map("job_company") @db.VarChar(255)
+
+  question String @db.Text
+  answer   String @db.LongText
+
+  /// Which model wrote it, so a later prompt or model change can find stale rows.
+  model String @db.VarChar(64)
+
+  /// Which of the three context documents actually existed and were sent:
+  /// `{ profile, resume, coverLetter }`.
+  ///
+  /// Stored because it changes how the answer should be read. The same question
+  /// answered before a resume was generated and after it are different answers,
+  /// and without this the log gives no way to tell which one you are looking at.
+  context Json
+
+  /// Which member of a shared profile asked, same reasoning as `JobApplication`.
+  askedById Int  @map("asked_by_id")
+  askedBy   User @relation("AiQueryAskedBy", fields: [askedById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// The log reads one pairing newest-first; this is the whole query.
+  @@index([profileId, jobId, createdAt])
+  @@index([jobId])
+  @@map("job_ai_queries")
 }

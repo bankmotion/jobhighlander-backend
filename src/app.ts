@@ -10,6 +10,7 @@ import { applicationRouter } from './routes/application.routes';
 import { discardRouter } from './routes/discard.routes';
 import { interviewRouter } from './routes/interview.routes';
 import { stageTypeRouter } from './routes/stageType.routes';
+import { jobQueryRouter } from './routes/jobQuery.routes';
 import { scrapeRunRouter } from './routes/scrapeRun.routes';
 import { scraperSettingRouter } from './routes/scraperSetting.routes';
 import { resumeRouter } from './routes/resume.routes';
@@ -40,6 +41,7 @@ export function createApp(): Application {
   app.use('/api/discards', discardRouter);
   app.use('/api/interviews', interviewRouter);
   app.use('/api/stage-types', stageTypeRouter);
+  app.use('/api/job-queries', jobQueryRouter);
   app.use('/api/scrape-runs', scrapeRunRouter);
   app.use('/api/scraper-settings', scraperSettingRouter);
   app.use('/api/resumes', resumeRouter);

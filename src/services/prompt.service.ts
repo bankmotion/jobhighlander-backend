@@ -36,6 +36,14 @@ export const PROMPT_KEYS = {
       'the tailored resume and the cover letter together, so this text governs ' +
       'both and the consistency between them.',
   },
+  'job.query.system': {
+    name: 'Ask AI about a job',
+    description:
+      'Governs the free-form questions a user asks about one posting. The ' +
+      'model is given the candidate record, the posting, and the resume and ' +
+      'cover letter when they exist — this text decides how honestly it ' +
+      'handles what the record does NOT contain.',
+  },
 } as const;
 
 export type PromptKey = keyof typeof PROMPT_KEYS;

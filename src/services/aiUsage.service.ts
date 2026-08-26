@@ -10,11 +10,12 @@ import { logger } from './logger.service';
  * documents. `resume` and `cover_letter` remain because historical rows carry
  * them and a spend log must keep reading its own history.
  */
-export type AiFeature = 'application' | 'resume' | 'cover_letter';
+export type AiFeature = 'application' | 'job_query' | 'resume' | 'cover_letter';
 
 /** Human labels, so the dashboard never has to translate a database value. */
 const FEATURE_LABELS: Record<AiFeature, string> = {
   application: 'Resume + cover letter',
+  job_query: 'Ask AI about a job',
   resume: 'Resume (legacy, separate call)',
   cover_letter: 'Cover letter (legacy, separate call)',
 };
