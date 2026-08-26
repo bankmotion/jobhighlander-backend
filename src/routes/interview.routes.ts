@@ -187,6 +187,39 @@ interviewRouter.get('/status', requireAuth, async (req: AuthedRequest, res: Resp
   }
 });
 
+/**
+ * GET /api/interviews/calendar?from=&to=&profileId= — sittings in a range.
+ *
+ * The window is capped at 400 days. The calendar asks for one month at a time
+ * plus the days either side of the grid, so anything near the cap is either a
+ * mistake or someone driving the endpoint by hand — and without a bound this is
+ * a full table scan of every panel the caller can reach, driven from a query
+ * string. Registered before `/:id`, like the three above.
+ */
+interviewRouter.get('/calendar', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
+  try {
+    const parsed = z
+      .object({
+        from: z.string().datetime({ offset: true }),
+        to: z.string().datetime({ offset: true }),
+        profileId: idParam.optional(),
+      })
+      .safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
+
+    const from = new Date(parsed.data.from);
+    const to = new Date(parsed.data.to);
+    if (to <= from) return res.status(400).json({ error: '`to` must be after `from`' });
+    if (to.getTime() - from.getTime() > 400 * 86_400_000) {
+      return res.status(400).json({ error: 'Range must be 400 days or less' });
+    }
+
+    res.json(await interviewService.calendar(req.user!.id, from, to, parsed.data.profileId));
+  } catch (err) {
+    failure(err, res, next);
+  }
+});
+
 /** GET /api/interviews/for-job?jobId=&profileId= — the timeline, or null. */
 interviewRouter.get('/for-job', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {

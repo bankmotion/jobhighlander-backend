@@ -66,6 +66,32 @@ export interface InterviewDetail {
   steps: StepRow[];
 }
 
+/**
+ * One scheduled sitting as the calendar needs it.
+ *
+ * Carries more context than `UpcomingPanel` because a month grid shows history
+ * as well as what is next: `stepResult` and `interviewStatus` are what let a
+ * cancelled round or a dead process render differently from a live one instead
+ * of all of them looking equally like something to prepare for.
+ */
+export interface CalendarPanel {
+  panelId: number;
+  interviewId: number;
+  jobId: number | null;
+  jobTitle: string;
+  jobCompany: string | null;
+  profileId: number;
+  profileName: string;
+  stepTitle: string | null;
+  stepResult: StepResult;
+  interviewStatus: InterviewStatus;
+  stages: StageBadge[];
+  scheduledAt: Date;
+  timezone: string | null;
+  durationMin: number | null;
+  meetingUrl: string | null;
+}
+
 /** One upcoming sitting, across every process the caller can see. */
 export interface UpcomingPanel {
   panelId: number;
@@ -521,6 +547,94 @@ export const interviewService = {
       durationMin: r.durationMin,
       meetingUrl: r.meetingUrl,
     }));
+  },
+
+  /**
+   * Every scheduled sitting between two instants, across every process the
+   * caller can reach. Backs the calendar.
+   *
+   * UNLIKE `upcoming`, this includes the PAST and includes CLOSED processes.
+   * A calendar is a record as much as a plan — "when did I interview with
+   * them" is the question it gets asked once a process is over — so filtering
+   * to live ones would empty out exactly the months worth looking back at.
+   * Each row carries its step result and process status so the UI can render
+   * the dead ones as dead rather than hiding them.
+   *
+   * The range is bounded by the caller; the route caps it.
+   */
+  async calendar(
+    userId: number,
+    from: Date,
+    to: Date,
+    profileId?: number,
+  ): Promise<CalendarPanel[]> {
+    const rows = await prisma.interviewPanel.findMany({
+      where: {
+        scheduledAt: { gte: from, lte: to },
+        step: {
+          interview: {
+            profile: usableProfileWhere(userId),
+            ...(profileId ? { profileId } : {}),
+          },
+        },
+      },
+      orderBy: { scheduledAt: 'asc' },
+      select: {
+        id: true,
+        scheduledAt: true,
+        timezone: true,
+        durationMin: true,
+        meetingUrl: true,
+        step: {
+          select: {
+            title: true,
+            result: true,
+            stages: {
+              orderBy: { sortOrder: 'asc' },
+              select: {
+                stageType: { select: { id: true, key: true, name: true, color: true, archived: true } },
+              },
+            },
+            interview: {
+              select: {
+                id: true,
+                jobId: true,
+                jobTitle: true,
+                jobCompany: true,
+                status: true,
+                profileId: true,
+                profile: { select: { firstName: true, lastName: true, email: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return rows.map((r) => {
+      const iv = r.step.interview;
+      return {
+        panelId: r.id,
+        interviewId: iv.id,
+        jobId: iv.jobId,
+        jobTitle: iv.jobTitle,
+        jobCompany: iv.jobCompany,
+        profileId: iv.profileId,
+        profileName:
+          [iv.profile.firstName, iv.profile.lastName].filter(Boolean).join(' ') ||
+          iv.profile.email ||
+          `Profile #${iv.profileId}`,
+        stepTitle: r.step.title,
+        stepResult: r.step.result as StepResult,
+        interviewStatus: iv.status as InterviewStatus,
+        stages: r.step.stages.map((s) => s.stageType),
+        // Non-null by the `gte`/`lte` filter, which SQL never matches on NULL.
+        scheduledAt: r.scheduledAt!,
+        timezone: r.timezone,
+        durationMin: r.durationMin,
+        meetingUrl: r.meetingUrl,
+      };
+    });
   },
 
   /**
