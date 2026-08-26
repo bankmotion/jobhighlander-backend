@@ -180,4 +180,24 @@ export const CLASSIC_CSS = `
 
   /* Never orphan a heading at the foot of a page. */
   h2 { break-after: avoid; page-break-after: avoid; }
+
+  /* ── paged output ────────────────────────────────────────────────────────
+     THE VERTICAL INSET LIVES ON @page, NOT ON .page's PADDING.
+
+     Padding applies once to a box; it does not repeat on each sheet the box
+     flows across. With @page margin:0 that put the inset at the top of
+     the FIRST page only, and every page after it began flush against the top
+     edge of the sheet.
+
+     A literal px value rather than var(--pad): @page is outside the document
+     tree, so custom properties do not resolve inside it and the declaration
+     would be dropped silently.
+
+     min-height goes too. @page now owns the sheet, and a box still asking for
+     the full page height inside a printable area shortened by two margins would
+     push a short resume onto a second, empty page. */
+  @media print {
+    @page { margin: {{PAD}}px 0; }
+    .page { min-height: 0; padding-top: 0; padding-bottom: 0; }
+  }
 `;

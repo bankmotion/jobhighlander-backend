@@ -188,4 +188,26 @@ export const CREATIVE_CSS = `
   /* The judgement line. Set apart from the bullets by colour and size,
      not by a rule or a box, so extraction still reads it as a sentence. */
   .impact { margin: 4px 0 0; font-size: 9.5pt; color: #444; }
+
+  /* ── paged output ────────────────────────────────────────────────────────
+     Same fix as the single-column layouts: the vertical inset moves to @page so
+     it repeats on every sheet, because padding applies once to a box rather
+     than to each page the box flows across. See classic.tsx for the full note.
+
+     Two differences this layout forces:
+
+     .page keeps a min-height — one printable page, not one SHEET — so the
+     accent column still fills the page instead of stopping mid-sheet on a short
+     resume.
+
+     The cost, accepted deliberately: the accent column no longer bleeds to the
+     top and bottom edges of the paper, because the @page margin is not paintable
+     by the document. A repeating top inset and a full-bleed sidebar cannot both
+     exist in print CSS, and text that starts hard against the paper edge on
+     page 2 is the worse of the two. */
+  @media print {
+    @page { margin: {{PAD}}px 0; }
+    .page { min-height: calc({{HEIGHT}}px - {{PAD}}px * 2); }
+    .side, .main { padding-top: 0; padding-bottom: 0; }
+  }
 `;
