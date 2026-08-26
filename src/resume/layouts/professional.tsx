@@ -137,8 +137,21 @@ export const PROFESSIONAL_CSS = `
 
   section > p { margin: 0; padding: 0 2px; }
 
-  .entry { margin-bottom: var(--entry-gap); padding: 0 2px; break-inside: avoid; page-break-inside: avoid; }
+  /* A role with ten bullets runs to roughly half a page. break-inside: avoid
+     does NOT make such a block fit: it moves the whole block to the next sheet
+     and leaves the bottom half of this one blank. So an entry is allowed to
+     split, and the two rules below decide where it may do so. */
+  .entry { margin-bottom: var(--entry-gap); padding: 0 2px; break-inside: auto; page-break-inside: auto; }
   .entry:last-child { margin-bottom: 0; }
+
+  /* Never strand a heading. The title/period line stays with what it
+     introduces, and a single bullet never splits across sheets. orphans/widows
+     also keep a two-line education entry whole without forbidding breaks
+     outright, which is why break-inside: avoid is no longer needed there. */
+  .entry-head { break-inside: avoid; page-break-inside: avoid; }
+  .entry-head, .loc { break-after: avoid; page-break-after: avoid; }
+  li { break-inside: avoid; page-break-inside: avoid; orphans: 2; widows: 2; }
+
 
   .entry-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
   .left { display: flex; flex-direction: column; min-width: 0; }
