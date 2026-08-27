@@ -90,6 +90,27 @@ applicationRouter.get(
   },
 );
 
+/**
+ * GET /api/applications/company-history?profileId=&jobIds=1,2,3
+ *
+ * For each job, the profile's most recent EARLIER application at the same
+ * company. Same query shape as /status so the list can fetch both together.
+ */
+applicationRouter.get(
+  '/company-history',
+  requireAuth,
+  async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const parsed = statusQuery.safeParse(req.query);
+      if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
+      const { profileId, jobIds } = parsed.data;
+      res.json(await applicationService.companyHistoryFor(jobIds, profileId, req.user!.id));
+    } catch (err) {
+      failure(err, res, next);
+    }
+  },
+);
+
 /** GET /api/applications/status?profileId=&jobIds=1,2,3 — keyed by job id. */
 applicationRouter.get(
   '/status',

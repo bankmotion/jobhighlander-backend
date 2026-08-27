@@ -12,6 +12,29 @@ export interface AppliedStatus {
 /** Keyed by job id. A job nobody applied to is simply absent. */
 export type AppliedStatusMap = Record<number, AppliedStatus>;
 
+/**
+ * A prior application at the SAME company as some job on screen.
+ *
+ * The point is recall while scanning a list: you have dealt with this employer
+ * before, here is when and for what. It is deliberately not the same thing as
+ * `AppliedStatus`, which is about THIS posting.
+ */
+export interface CompanyHistory {
+  /** The company as the job row spells it, for display. */
+  company: string;
+  /** When the earlier application was made — the most recent one if several. */
+  appliedAt: Date;
+  /** What that earlier application was for, so the badge can explain itself. */
+  jobTitle: string;
+  /** The job applied to then, when the posting still exists. */
+  jobId: number | null;
+  /** How many prior applications this profile has at that company. */
+  count: number;
+}
+
+/** Keyed by the job id ON SCREEN, not by the earlier application's job id. */
+export type CompanyHistoryMap = Record<number, CompanyHistory>;
+
 /** One application on a job, named by the profile it was made for. */
 export interface JobApplicationRow {
   profileId: number;
@@ -170,6 +193,79 @@ export const applicationService = {
       // back without one even though the filter asked for a set.
       if (r.jobId == null) continue;
       out[r.jobId] = { jobId: r.jobId, appliedAt: r.appliedAt, markedBy: r.markedBy.email };
+    }
+    return out;
+  },
+
+  /**
+   * For each job on screen, the profile's most recent EARLIER application at
+   * the same company.
+   *
+   * Matching is on the company name, normalised to a trimmed, case-folded,
+   * whitespace-collapsed form. That is deliberately exact rather than fuzzy:
+   * scraped company names already vary enough ("Ladder" and "Ladders" are two
+   * different employers in this database), and a loose match would claim you
+   * had applied somewhere you had not — a worse failure than missing a badge.
+   *
+   * The comparison happens in JS rather than SQL so the normalisation is
+   * explicit and identical for both sides, instead of depending on whatever
+   * collation the column happens to carry. It costs one query over the
+   * profile's own applications, which is bounded by how much a person applies.
+   *
+   * A job never matches its own application: the card already says "Applied"
+   * for that, and "previously applied here" about itself reads as a bug.
+   */
+  async companyHistoryFor(
+    jobIds: number[],
+    profileId: number,
+    userId: number,
+  ): Promise<CompanyHistoryMap> {
+    if (jobIds.length === 0) return {};
+
+    const norm = (v: string | null | undefined): string =>
+      (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+    const [jobs, applications] = await Promise.all([
+      prisma.job.findMany({
+        where: { id: { in: jobIds } },
+        select: { id: true, company: true },
+      }),
+      prisma.jobApplication.findMany({
+        where: { profileId, profile: usableProfileWhere(userId), NOT: { jobCompany: null } },
+        select: { jobId: true, jobCompany: true, jobTitle: true, appliedAt: true },
+        orderBy: { appliedAt: 'desc' },
+      }),
+    ]);
+    if (applications.length === 0) return {};
+
+    // Newest first above, so the first entry seen for a company is the one to
+    // show and the rest only contribute to the count.
+    const byCompany = new Map<string, { rows: typeof applications; }>();
+    for (const a of applications) {
+      const key = norm(a.jobCompany);
+      if (!key) continue;
+      const bucket = byCompany.get(key);
+      if (bucket) bucket.rows.push(a);
+      else byCompany.set(key, { rows: [a] });
+    }
+
+    const out: CompanyHistoryMap = {};
+    for (const job of jobs) {
+      const key = norm(job.company);
+      if (!key) continue;
+      const bucket = byCompany.get(key);
+      if (!bucket) continue;
+      // Exclude this very posting, then take the most recent of what is left.
+      const others = bucket.rows.filter((r) => r.jobId !== job.id);
+      const latest = others[0];
+      if (!latest) continue;
+      out[job.id] = {
+        company: job.company ?? latest.jobCompany ?? '',
+        appliedAt: latest.appliedAt,
+        jobTitle: latest.jobTitle,
+        jobId: latest.jobId,
+        count: others.length,
+      };
     }
     return out;
   },
