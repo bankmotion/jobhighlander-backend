@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
-import { authService } from '../services/auth.service';
+import { authService, GoogleNotConfiguredError } from '../services/auth.service';
 import { requireAuth, requireRole, type AuthedRequest } from '../middleware/auth.middleware';
 
 export const authRouter = Router();
@@ -37,6 +37,34 @@ authRouter.post('/login', async (req: Request, res: Response, next: NextFunction
     }
     res.json({ token: result.token, email: result.email, role: result.role });
   } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/auth/google — sign in with a Google ID token (the only sign-in the
+ * UI offers). First-time users are created as pending guests awaiting approval.
+ */
+authRouter.post('/google', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = z.object({ credential: z.string().min(1) }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'A Google credential is required' });
+
+    const result = await authService.loginWithGoogle(parsed.data.credential);
+    if (!result.ok) {
+      if (result.reason === 'pending') {
+        return res.status(403).json({ error: 'Your account is pending admin approval' });
+      }
+      if (result.reason === 'unverified') {
+        return res.status(403).json({ error: 'Your Google email address is not verified' });
+      }
+      return res.status(401).json({ error: 'Google sign-in failed' });
+    }
+    res.json({ token: result.token, email: result.email, role: result.role });
+  } catch (err) {
+    if (err instanceof GoogleNotConfiguredError) {
+      return res.status(503).json({ error: 'Google sign-in is not configured on the server' });
+    }
     next(err);
   }
 });
