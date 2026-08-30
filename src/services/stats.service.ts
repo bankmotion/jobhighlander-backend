@@ -5,10 +5,14 @@ import { usableProfileWhere } from './profile.service';
  * Bid performance — what happened to the applications this user's profiles made.
  *
  * "Bid" is this product's word for an application, so the questions are: how many
- * went out, how many came back, and from which sources. Everything is scoped
- * through `usableProfileWhere`, the same rule that decides whether the user may
- * mark an application at all, so a shared profile's numbers are visible to
- * exactly the people who work it.
+ * went out, how many came back, and from which sources.
+ *
+ * THESE ARE THE CALLER'S OWN BIDS. A shared profile is worked by several people
+ * and `markedById` records who actually sent each one, so the numbers here are
+ * filtered to that rather than to the profile. Scoping by profile alone would
+ * credit a bidder with a colleague's applications and make an individual
+ * interview rate meaningless — the profile filter stays on top of it as the
+ * access rule, not as the definition of "mine".
  *
  * The funnel is derived from JOINED state, not from separate counts: an
  * interview only counts as a conversion when it belongs to an application that
@@ -90,28 +94,51 @@ export const statsService = {
       return emptyResult(days, from, to);
     }
 
-    const [applications, interviews, activeInterviews, discarded] = await Promise.all([
+    const [applications, myBidsEver, interviews, discarded] = await Promise.all([
       prisma.jobApplication.findMany({
-        where: { profileId: { in: profileIds }, appliedAt: { gte: from, lte: to } },
+        where: {
+          profileId: { in: profileIds },
+          markedById: userId,
+          appliedAt: { gte: from, lte: to },
+        },
         select: { profileId: true, jobId: true, jobCompany: true, appliedAt: true },
+      }),
+      // Every bid this user ever made, ids only. Outcomes and the live count are
+      // deliberately NOT windowed — an interview opened from a bid sent two
+      // months ago is still this user's interview — so the join needs the whole
+      // history, not just the window above.
+      prisma.jobApplication.findMany({
+        where: { profileId: { in: profileIds }, markedById: userId },
+        select: { profileId: true, jobId: true },
       }),
       prisma.interview.findMany({
         where: { profileId: { in: profileIds } },
         select: { profileId: true, jobId: true, status: true, createdAt: true },
       }),
-      prisma.interview.count({
-        where: { profileId: { in: profileIds }, status: 'active' },
-      }),
       prisma.jobDiscard.count({
-        where: { profileId: { in: profileIds }, discardedAt: { gte: from, lte: to } },
+        where: {
+          profileId: { in: profileIds },
+          discardedById: userId,
+          discardedAt: { gte: from, lte: to },
+        },
       }),
     ]);
 
     // Which (profile, job) pairs reached an interview. Keyed on the pair because
     // the same posting can be bid on by two profiles independently.
     const key = (p: number, j: number | null) => `${p}:${j ?? 'x'}`;
+
+    // Interviews are kept only where they sit on a bid this user sent. Who
+    // OPENED the interview is not the test: a colleague logging the call for a
+    // job you applied to still means your bid converted. What must not happen is
+    // counting an interview from someone else's bid as yours.
+    const myBidKeys = new Set(myBidsEver.map((b) => key(b.profileId, b.jobId)));
+    const myInterviews = interviews.filter((iv) => myBidKeys.has(key(iv.profileId, iv.jobId)));
+
     const interviewByPair = new Map<string, (typeof interviews)[number]>();
-    for (const iv of interviews) interviewByPair.set(key(iv.profileId, iv.jobId), iv);
+    for (const iv of myInterviews) interviewByPair.set(key(iv.profileId, iv.jobId), iv);
+
+    const activeInterviews = myInterviews.filter((iv) => iv.status === 'active').length;
 
     // Site comes off the job row, so applications whose posting was deleted fall
     // into "Unknown" rather than silently vanishing from the breakdown.
@@ -169,7 +196,7 @@ export const statsService = {
     }
 
     const outcomeCounts = new Map<string, number>();
-    for (const iv of interviews) {
+    for (const iv of myInterviews) {
       outcomeCounts.set(iv.status, (outcomeCounts.get(iv.status) ?? 0) + 1);
     }
 
