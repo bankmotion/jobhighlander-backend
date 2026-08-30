@@ -18,6 +18,8 @@ const query = z.object({
   from: isoDate.optional(),
   to: isoDate.optional(),
   profileId: z.coerce.number().int().positive().optional(),
+  /** Narrow to one bidder. Honoured only by the team endpoint. */
+  userId: z.coerce.number().int().positive().optional(),
 });
 
 /**
@@ -94,6 +96,7 @@ statsRouter.get(
       res.json(
         await statsService.bidPerformance(req.user!.id, window, {
           profileId: parsed.data.profileId,
+          userId: parsed.data.userId,
           allUsers: true,
         }),
       );

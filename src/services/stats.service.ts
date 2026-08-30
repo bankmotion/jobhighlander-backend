@@ -49,6 +49,15 @@ export interface BidPerformance {
    * the caller — and populated only for the cross-user (admin) scope.
    */
   byUser: { userId: number; email: string; applications: number; interviews: number; offers: number }[];
+  /**
+   * Everyone who has EVER bid on the in-scope profiles — the option list for the
+   * bidder filter.
+   *
+   * Deliberately not derived from `byUser`: that is filtered by the window AND
+   * by the selected bidder, so building the dropdown from it would collapse to a
+   * single option the moment you used it, with no way back.
+   */
+  bidders: { userId: number; email: string }[];
 }
 
 const OUTCOME_LABELS: Record<string, string> = {
@@ -84,9 +93,14 @@ export const statsService = {
        * question; "all profiles" is not.
        */
       allUsers?: boolean;
+      /**
+       * Narrow to a single bidder. Only meaningful with `allUsers`; in the
+       * personal scope the caller is already the only bidder in the data.
+       */
+      userId?: number;
     } = {},
   ): Promise<BidPerformance> {
-    const { profileId, allUsers = false } = opts;
+    const { profileId, allUsers = false, userId: bidderId } = opts;
     const { from, to } = window;
     // Inclusive day count, so a same-day range is one bucket rather than none.
     const days = Math.max(0, Math.round((to.getTime() - from.getTime()) / 86400000));
@@ -114,11 +128,11 @@ export const statsService = {
       return emptyResult(days, from, to);
     }
 
-    const [applications, myBidsEver, interviews, discarded] = await Promise.all([
+    const [applications, myBidsEver, interviews, discarded, bidderRows] = await Promise.all([
       prisma.jobApplication.findMany({
         where: {
           profileId: { in: profileIds },
-          ...(allUsers ? {} : { markedById: userId }),
+          ...(allUsers ? (bidderId ? { markedById: bidderId } : {}) : { markedById: userId }),
           appliedAt: { gte: from, lte: to },
         },
         select: {
@@ -132,7 +146,10 @@ export const statsService = {
       // months ago is still this user's interview — so the join needs the whole
       // history, not just the window above.
       prisma.jobApplication.findMany({
-        where: { profileId: { in: profileIds }, ...(allUsers ? {} : { markedById: userId }) },
+        where: {
+          profileId: { in: profileIds },
+          ...(allUsers ? (bidderId ? { markedById: bidderId } : {}) : { markedById: userId }),
+        },
         select: { profileId: true, jobId: true },
       }),
       prisma.interview.findMany({
@@ -142,10 +159,19 @@ export const statsService = {
       prisma.jobDiscard.count({
         where: {
           profileId: { in: profileIds },
-          ...(allUsers ? {} : { discardedById: userId }),
+          ...(allUsers ? (bidderId ? { discardedById: bidderId } : {}) : { discardedById: userId }),
           discardedAt: { gte: from, lte: to },
         },
       }),
+      // Option list for the bidder filter: unwindowed and unfiltered by bidder,
+      // so selecting one does not erase the others from the dropdown.
+      allUsers
+        ? prisma.jobApplication.findMany({
+            where: { profileId: { in: profileIds } },
+            distinct: ['markedById'],
+            select: { markedById: true, markedBy: { select: { email: true } } },
+          })
+        : Promise.resolve([]),
     ]);
 
     // Which (profile, job) pairs reached an interview. Keyed on the pair because
@@ -275,6 +301,9 @@ export const statsService = {
         .sort((a, b) => b.count - a.count),
       // Only meaningful when several people's bids are in scope; in the personal
       // view every row would be the caller, which is noise rather than a table.
+      bidders: bidderRows
+        .map((r) => ({ userId: r.markedById, email: r.markedBy?.email ?? `User ${r.markedById}` }))
+        .sort((a, b) => a.email.localeCompare(b.email)),
       byUser: allUsers
         ? [...byUser.entries()]
             .map(([id, v]) => ({ userId: id, ...v }))
@@ -305,5 +334,6 @@ function emptyResult(days: number, from: Date, to: Date): BidPerformance {
     byProfile: [],
     outcomes: [],
     byUser: [],
+    bidders: [],
   };
 }
