@@ -13,6 +13,7 @@ import { stageTypeRouter } from './routes/stageType.routes';
 import { jobQueryRouter } from './routes/jobQuery.routes';
 import { scrapeRunRouter } from './routes/scrapeRun.routes';
 import { scraperSettingRouter } from './routes/scraperSetting.routes';
+import { statsRouter } from './routes/stats.routes';
 import { resumeRouter } from './routes/resume.routes';
 import { coverLetterRouter } from './routes/coverLetter.routes';
 import { promptRouter } from './routes/prompt.routes';
@@ -44,6 +45,7 @@ export function createApp(): Application {
   app.use('/api/job-queries', jobQueryRouter);
   app.use('/api/scrape-runs', scrapeRunRouter);
   app.use('/api/scraper-settings', scraperSettingRouter);
+  app.use('/api/stats', statsRouter);
   app.use('/api/resumes', resumeRouter);
   app.use('/api/cover-letters', coverLetterRouter);
   app.use('/api/prompts', promptRouter);
