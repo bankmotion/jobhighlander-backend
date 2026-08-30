@@ -62,11 +62,12 @@ const pct = (part: number, whole: number): number =>
 export const statsService = {
   async bidPerformance(
     userId: number,
-    days: number,
+    window: { from: Date; to: Date },
     profileId?: number,
   ): Promise<BidPerformance> {
-    const to = new Date();
-    const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+    const { from, to } = window;
+    // Inclusive day count, so a same-day range is one bucket rather than none.
+    const days = Math.max(0, Math.round((to.getTime() - from.getTime()) / 86400000));
     const scope = usableProfileWhere(userId);
     const profileFilter = profileId ? { id: profileId, ...scope } : scope;
 
@@ -130,7 +131,9 @@ export const statsService = {
     const byProfile = new Map<number, { applications: number; interviews: number; offers: number }>();
 
     for (let i = 0; i <= days; i++) {
-      daily.set(dayKey(new Date(from.getTime() + i * 86400000)), { applications: 0, interviews: 0 });
+      const at = new Date(from.getTime() + i * 86400000);
+      if (at.getTime() > to.getTime() + 86400000) break;
+      daily.set(dayKey(at), { applications: 0, interviews: 0 });
     }
 
     for (const a of applications) {
