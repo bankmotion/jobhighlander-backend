@@ -1,36 +1,11 @@
 import { prisma } from '../lib/prisma';
 import { logger } from '../services/logger.service';
 
-/**
- * Seed a realistic interview timeline onto one (profile, job) pairing, so the
- * dashboard can be looked at with something on it.
- *
- * `npm run seed:interview-demo -- [jobId] [profileId] [email]`
- * defaults: 12486  1  pavelvulfin@gmail.com
- *
- * DESTRUCTIVE FOR THAT ONE PAIRING: an existing timeline is deleted and
- * rebuilt, so the script can be re-run to get back to a known state. It touches
- * nothing else — not the application mark, not other profiles, not other jobs.
- *
- * The data is chosen to exercise every visual state the timeline can render:
- * a passed step, a cancelled one, a step wearing TWO badges, a step holding TWO
- * panels, a step with no date at all, two different source time zones, and both
- * past and upcoming sittings.
- */
-
 const [jobIdArg, profileIdArg, emailArg] = process.argv.slice(2);
 const JOB_ID = Number(jobIdArg ?? 12486);
 const PROFILE_ID = Number(profileIdArg ?? 1);
 const EMAIL = emailArg ?? 'pavelvulfin@gmail.com';
 
-/**
- * A wall clock in a named zone as the UTC instant it denotes.
- *
- * Same two-pass correction as `frontend/lib/tz.ts` — the first guess uses the
- * offset at the guessed instant, which is an hour out on a DST changeover day,
- * so the offset is re-read at the corrected instant. Duplicated rather than
- * shared because the two live in different packages and this is nine lines.
- */
 function zoned(wall: string, timeZone: string): Date {
   const [, y, mo, d, hh, mm] = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/
     .exec(wall)!
@@ -60,7 +35,6 @@ function zoned(wall: string, timeZone: string): Date {
 const ET = 'America/New_York';
 const PT = 'America/Los_Angeles';
 
-/** The shape the script writes. `stages` are stage-type KEYS, resolved below. */
 const PLAN: {
   stages: string[];
   title: string | null;

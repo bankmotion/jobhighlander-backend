@@ -1,7 +1,6 @@
 import { prisma } from '../lib/prisma';
 import { usableProfileWhere } from './profile.service';
 
-/** Raised for a rejected request; the route turns it into a status code. */
 export class CoverLetterError extends Error {
   constructor(
     message: string,
@@ -24,15 +23,6 @@ const fmtDate = (d: Date) =>
   d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 
 
-/**
- * Wrap the model's paragraphs in the letter frame.
- *
- * The frame is assembled from the job and the profile rather than generated:
- * the company name, the candidate's name and today's date are facts the app
- * already holds, and a model can only get them wrong. The date is baked in
- * here rather than rendered on read, so a letter is a record of what was
- * written instead of something that silently re-dates itself next week.
- */
 export function assembleLetter(input: {
   paragraphs: string[];
   company: string | null;
@@ -63,14 +53,6 @@ export function assembleLetter(input: {
 }
 
 export const coverLetterService = {
-  /**
-   * Which of `jobIds` already have a letter for this profile.
-   *
-   * One query for a whole page rather than a request per card, mirroring
-   * `resumeService.statusFor`. The BODY is deliberately not returned — a page
-   * of twenty letters is tens of kilobytes to render a one-word badge, and the
-   * card only needs to know that one exists.
-   */
   async statusFor(
     jobIds: number[],
     profileId: number,
@@ -91,7 +73,6 @@ export const coverLetterService = {
     return out;
   },
 
-  /** The stored letter for this pairing, or null. Having none is normal. */
   async saved(jobId: number, profileId: number, userId: number): Promise<StoredCoverLetter | null> {
     const row = await prisma.coverLetter.findFirst({
       where: { jobId, profileId, profile: usableProfileWhere(userId) },
@@ -101,13 +82,6 @@ export const coverLetterService = {
     return { ...row, reviewNotes: (row.reviewNotes as string[]) ?? [] };
   },
 
-  /**
-   * Save a hand edit.
-   *
-   * Sets `edited`, which is what makes the UI confirm before a regeneration
-   * overwrites wording the user tuned themselves. Scoped to profiles the caller
-   * may use, so a shared profile's letters are editable by the whole team.
-   */
   async update(
     jobId: number,
     profileId: number,
@@ -128,13 +102,6 @@ export const coverLetterService = {
     return { ...row, reviewNotes: (row.reviewNotes as string[]) ?? [] };
   },
 
-  /**
-   * Upsert the single row for this pairing.
-   *
-   * `edited` is reset here on purpose: the text the user tuned is gone, so
-   * leaving the flag set would keep warning about protecting wording that no
-   * longer exists.
-   */
   async persist(input: {
     profileId: number;
     jobId: number;

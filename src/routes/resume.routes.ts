@@ -16,15 +16,6 @@ import { logger } from '../services/logger.service';
 
 export const resumeRouter = Router();
 
-/**
- * POST /api/resumes/preview — generate the application for one job posting.
- *
- * Despite the name this now writes BOTH documents, because they come from a
- * single model call. The response shape is unchanged so existing callers keep
- * working: the resume is returned as before, and the cover letter is saved
- * alongside it and picked up by the cover-letter endpoints. Regenerating from
- * here therefore also rewrites the letter.
- */
 resumeRouter.post('/preview', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     if (!aiEnabled()) {
@@ -46,7 +37,6 @@ resumeRouter.post('/preview', requireAuth, async (req: AuthedRequest, res: Respo
   }
 });
 
-/** GET /api/resumes/templates — everything the picker can offer. */
 resumeRouter.get('/templates', requireAuth, async (_req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     res.json({ presets: await presetService.list(), parameterSpace: PARAMETER_SPACE });
@@ -60,7 +50,6 @@ const setDefaultSchema = zod.object({
   templateKey: zod.string().trim().min(1).max(64),
 });
 
-/** POST /api/resumes/templates/default — set a profile's default preset. */
 resumeRouter.post('/templates/default', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = setDefaultSchema.safeParse(req.body);
@@ -80,11 +69,6 @@ const pairingSchema = zod.object({
   profileId: zod.coerce.number().int().positive(),
 });
 
-/**
- * GET /api/resumes/saved?jobId=&profileId= — the one resume stored for this
- * pairing, or null. Having none is the normal state before the first
- * generation, so it is a 200 with null rather than a 404.
- */
 resumeRouter.get('/saved', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = pairingSchema.safeParse(req.query);
@@ -95,11 +79,6 @@ resumeRouter.get('/saved', requireAuth, async (req: AuthedRequest, res: Response
   }
 });
 
-/**
- * The list page asks about a whole page of jobs at once. Bounded at 100 to match
- * the `pageSize` ceiling on GET /api/jobs — without a cap this is an unbounded
- * `IN (...)` driven straight from the query string.
- */
 const statusQuerySchema = zod.object({
   profileId: zod.coerce.number().int().positive(),
   jobIds: zod
@@ -110,10 +89,6 @@ const statusQuerySchema = zod.object({
     .pipe(zod.array(zod.number().int().positive()).min(1).max(100)),
 });
 
-/**
- * GET /api/resumes/status?profileId=&jobIds=1,2,3 — which of these jobs already
- * have a resume, keyed by job id. Jobs with none are simply absent.
- */
 resumeRouter.get('/status', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = statusQuerySchema.safeParse(req.query);
@@ -129,12 +104,6 @@ const applyTemplateSchema = pairingSchema.extend({
   templateKey: zod.string().trim().min(1).max(64),
 });
 
-/**
- * POST /api/resumes/template — apply a template to the saved resume.
- *
- * Selecting a template in the UI only re-renders the preview; this is the
- * explicit Apply, and the only thing that writes the choice to the database.
- */
 resumeRouter.post('/template', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = applyTemplateSchema.safeParse(req.body);
@@ -157,24 +126,6 @@ const pdfBodySchema = zod.object({
   pageSize: zod.enum(['letter', 'a4']).default('letter'),
 });
 
-/**
- * POST /api/resumes/pdf — render a generated resume to PDF.
- *
- * The resume travels in the body rather than being re-fetched by id because
- * nothing is persisted yet: the client already holds the object it wants
- * printed, and regenerating to print would cost a model call per download.
- */
-/**
- * POST /api/resumes/docx — the same resume as an editable Word document.
- *
- * Deliberately NOT a conversion of the PDF. Word has no CSS grid or flex, so
- * anything derived from the rendered HTML loses the multi-column layouts; this
- * builds from the same structured resume the PDF renders from, which also keeps
- * the output parseable by an ATS. See resume/docx.ts.
- *
- * Body and auth are identical to /pdf on purpose, so the client can offer the
- * two formats from one piece of state.
- */
 resumeRouter.post('/docx', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = pdfBodySchema.safeParse(req.body);

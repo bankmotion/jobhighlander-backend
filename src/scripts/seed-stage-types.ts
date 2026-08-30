@@ -2,12 +2,6 @@ import { stageTypeService } from '../services/stageType.service';
 import { prisma } from '../lib/prisma';
 import { logger } from '../services/logger.service';
 
-/**
- * Seed the starter interview stage badges. Idempotent — only fills in keys that
- * are missing, so re-running it never undoes a rename, recolour or archive.
- *
- * `npm run seed:stage-types`
- */
 async function main() {
   const added = await stageTypeService.seed();
   const all = await stageTypeService.list({ includeArchived: true });

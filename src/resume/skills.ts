@@ -5,21 +5,8 @@ export interface SkillGroup {
   names: string[];
 }
 
-/** Skills with no category of their own, gathered at the end. */
 const FALLBACK_CATEGORY = 'Additional';
 
-/**
- * Group skills by category, preserving the model's ordering.
- *
- * Insertion-ordered rather than sorted: the model is told to put the most
- * posting-relevant category first, and alphabetising would throw that away and
- * lead every resume with whatever happens to start with "A".
- *
- * Categories are matched case-insensitively on a trimmed value, because
- * "Cloud and Infrastructure" and "cloud and infrastructure" coming back from one
- * generation would otherwise render as two separate headings for one group.
- * The first spelling seen wins, so the heading reads the way the model wrote it.
- */
 export function groupSkills(skills: TailoredResume['skills']): SkillGroup[] {
   const groups = new Map<string, SkillGroup>();
 
@@ -41,7 +28,6 @@ export function groupSkills(skills: TailoredResume['skills']): SkillGroup[] {
   return [...rest, ...extra];
 }
 
-/** One line per group: "Backend: Go, Postgres, gRPC". */
 export function skillLines(skills: TailoredResume['skills'], sep = ', '): string[] {
   return groupSkills(skills).map((g) => `${g.category}: ${g.names.join(sep)}`);
 }

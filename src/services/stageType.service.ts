@@ -1,17 +1,5 @@
 import { prisma } from '../lib/prisma';
 
-/**
- * The starter badge catalogue.
- *
- * Seeded, not hard-coded: these rows exist so a fresh install has a usable
- * picker on day one, and every one of them can be renamed, recoloured,
- * reordered or archived afterwards without touching this file. `seed()` only
- * fills in keys that are MISSING, so re-running it never undoes an edit.
- *
- * The list is the common vocabulary of tech hiring rather than any one
- * company's loop — most processes use four or five of these, and which four
- * differs every time.
- */
 const DEFAULT_STAGE_TYPES: { key: string; name: string; color: string }[] = [
   { key: 'intro', name: 'Intro', color: '#8b5cf6' },
   { key: 'recruiter_screen', name: 'Recruiter Screen', color: '#a855f7' },
@@ -28,18 +16,11 @@ const DEFAULT_STAGE_TYPES: { key: string; name: string; color: string }[] = [
   { key: 'offer', name: 'Offer', color: '#22c55e' },
 ];
 
-/** What removing a type actually did — the caller phrases the message. */
 export type RemoveOutcome = { ok: true; deleted: boolean } | { ok: false; reason: 'not_found' };
 
-/** A 6-digit hex colour. Anything else is rejected rather than coerced. */
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
 export const stageTypeService = {
-  /**
-   * The catalogue. Archived types are excluded by default — the badge picker
-   * must not offer them — but included on request, because the admin screen has
-   * to be able to show and un-archive them.
-   */
   list({ includeArchived = false } = {}) {
     return prisma.interviewStageType.findMany({
       where: includeArchived ? {} : { archived: false },
@@ -47,7 +28,6 @@ export const stageTypeService = {
     });
   },
 
-  /** Fill in any default key that is missing. Never overwrites an existing row. */
   async seed(): Promise<number> {
     const existing = new Set(
       (await prisma.interviewStageType.findMany({ select: { key: true } })).map((t) => t.key),
@@ -120,16 +100,6 @@ export const stageTypeService = {
     }
   },
 
-  /**
-   * Remove a type — by DELETING it when no step has ever worn it, and by
-   * ARCHIVING it when one has.
-   *
-   * The distinction is the point. A type in use is referenced by
-   * `interview_step_stages` rows with ON DELETE CASCADE, so a hard delete would
-   * silently strip that badge off every step in every timeline that carries it,
-   * rewriting history to remove a stage that genuinely happened. Archiving
-   * takes it out of the picker and leaves the record intact.
-   */
   async remove(id: number): Promise<RemoveOutcome> {
     const type = await prisma.interviewStageType.findUnique({ where: { id }, select: { id: true } });
     if (!type) return { ok: false, reason: 'not_found' };
@@ -143,7 +113,6 @@ export const stageTypeService = {
     return { ok: true, deleted: true };
   },
 
-  /** How many steps wear each type — the admin screen shows it beside Delete. */
   async usageCounts(): Promise<Record<number, number>> {
     const rows = await prisma.interviewStepStage.groupBy({
       by: ['stageTypeId'],

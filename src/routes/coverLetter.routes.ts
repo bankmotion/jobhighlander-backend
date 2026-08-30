@@ -11,12 +11,6 @@ import { z } from 'zod';
 
 export const coverLetterRouter = Router();
 
-/**
- * Cover letters, one per (profile, job).
- *
- * Open to every signed-in role: the service scopes each call to profiles the
- * caller may use, so a bidder writes letters from a profile shared with them.
- */
 
 function failure(err: unknown, res: Response, next: NextFunction): void {
   if (err instanceof CoverLetterError) {
@@ -31,13 +25,6 @@ const pairing = z.object({
   profileId: z.coerce.number().int().positive(),
 });
 
-/**
- * GET /api/cover-letters/status?profileId=&jobIds=1,2,3 — which of these jobs
- * already have a letter, keyed by job id. Jobs with none are simply absent.
- *
- * Bounded at 100 to match the pageSize ceiling on GET /api/jobs — without a cap
- * this is an unbounded IN (...) driven straight from the query string.
- */
 const statusQuery = z.object({
   profileId: z.coerce.number().int().positive(),
   jobIds: z
@@ -63,7 +50,6 @@ coverLetterRouter.get(
   },
 );
 
-/** GET /api/cover-letters?jobId=&profileId= — the stored letter, or null. */
 coverLetterRouter.get('/', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = pairing.safeParse(req.query);
@@ -75,12 +61,6 @@ coverLetterRouter.get('/', requireAuth, async (req: AuthedRequest, res: Response
   }
 });
 
-/**
- * POST /api/cover-letters — generate (or regenerate) the letter.
- *
- * 409 when no tailored resume exists yet: the letter is written from it, so the
- * caller has a step to do rather than a broken request to debug.
- */
 coverLetterRouter.post('/', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     if (!aiEnabled()) {
@@ -100,7 +80,6 @@ coverLetterRouter.post('/', requireAuth, async (req: AuthedRequest, res: Respons
   }
 });
 
-/** PUT /api/cover-letters — save a hand edit. Marks the letter as edited. */
 coverLetterRouter.put('/', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = coverLetterUpdateSchema.safeParse(req.body);

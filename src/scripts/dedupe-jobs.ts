@@ -2,36 +2,8 @@ import crypto from 'node:crypto';
 import { prisma } from '../lib/prisma';
 import { logger } from '../services/logger.service';
 
-/**
- * Backfill `jobs.fingerprint` and merge the duplicate rows it exposes.
- *
- *   npx tsx src/scripts/dedupe-jobs.ts            dry run — reports, changes nothing
- *   npx tsx src/scripts/dedupe-jobs.ts --apply    write it
- *
- * Duplicates exist because `(site, siteJobId)` identifies a LISTING, not a JOB.
- * The Muse regenerates the hash in its URL slug on every render, and Glassdoor
- * issues several listing ids for one posting, so the same job entered five
- * times. See `Job.fingerprint` in schema.prisma.
- *
- * THE DANGEROUS PART is not deleting job rows — it is that `resumes.job_id` and
- * `job_applications.job_id` point at rows that are about to disappear. Both
- * carry a unique (profile_id, job_id), so re-pointing a dependent onto the
- * survivor can collide with one already there. Every merge below resolves that
- * explicitly; nothing is left to ON DELETE, which would silently null the job
- * off a resume the user paid model tokens for.
- */
-
-/** Oldest row wins: it is the one any existing resume or application points at. */
 const KEEP = 'oldest';
 
-/**
- * Normalise for identity comparison.
- *
- * NFKD + accent-strip + lower-case + collapse every run of non-alphanumerics to
- * a single space. The last step is what does the real work: two captures of the
- * same posting differed by one character of whitespace, which an exact hash
- * would have treated as two different jobs.
- */
 function norm(s: string | null | undefined): string {
   return (s ?? '')
     .normalize('NFKD')
@@ -41,21 +13,8 @@ function norm(s: string | null | undefined): string {
     .trim();
 }
 
-/**
- * Field separator between fingerprint parts.
- *
- * Every part normalises to [a-z0-9 ] and `site` is an enum of lowercase words,
- * so a pipe can never occur inside a part and cannot blur the boundary between
- * two of them.
- *
- * Printable on purpose. This was briefly a raw NUL byte, which made the file
- * read as binary to grep AND silently disagreed with the Python writer, so the
- * two hashed the same job differently — precisely the drift a shared hash
- * cannot survive.
- */
 const SEP = '|';
 
-/** site + company + title + location + first 100 chars of the description. */
 export function fingerprint(job: {
   site: string;
   company: string | null;

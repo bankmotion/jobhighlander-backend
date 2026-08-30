@@ -11,31 +11,6 @@ import { applicationDraftSchema, type ApplicationRequest } from '../schemas/gene
 import { sanitizeResume, sanitizeLetter } from '../resume/sanitize';
 import type { TailoredResume } from '../schemas/resume.schema';
 
-/**
- * Writes a whole application — resume and cover letter — in ONE model call.
- *
- * Named for the act, not the noun: `application.service.ts` is the "I applied to
- * this job" marker and is a different thing entirely.
- *
- * This replaces two calls that each re-sent the same candidate record and the
- * same posting. Measured on real runs, that duplication was ~2,400 input tokens
- * per application. Output is unchanged, because both documents still have to be
- * written — which is why this saves cost but very little time.
- *
- * THE COUPLING IS DELIBERATE AND HAS A COST. One call means one regeneration:
- * asking for a fresh letter necessarily rewrites the resume too, so a user who
- * hand-edited one and regenerates the other loses those edits. That is the
- * trade for a single prompt governing both documents, and it is what buys their
- * consistency — the letter is written with the finished resume in front of it
- * rather than from a separate reading of the record. Editing either document
- * after generation is unaffected; only regeneration is joint.
- */
-/**
- * Anthropic errors arrive as `status: 400 invalid_request_error` for things a
- * developer must fix (no credits, bad key). The generic handler renders that as
- * "Bad request", which sends someone hunting through their own payload. Map the
- * ones that matter to messages that name the actual problem. Always throws.
- */
 function mapProviderError(err: unknown): never {
   const e = err as {
     status?: number;
@@ -89,17 +64,6 @@ export const generationService = {
 
     const { name, contact } = profileIdentity(profile);
 
-    /**
-     * Years of work, computed here rather than left to the model.
-     *
-     * Asked to derive it, the model returned "4+", then "six", then "four" for
-     * the same unchanged history across three runs. It is arithmetic over dates
-     * we already hold, so it belongs in code and travels to the model as a
-     * fixed fact alongside the employers and the dates.
-     *
-     * Earliest start to latest end, an open end meaning today, rounded DOWN so
-     * the figure is never more than the dates support.
-     */
     const spans = profile.workExperiences.filter((w) => w.startDate);
     const earliest = spans.length ? Math.min(...spans.map((w) => w.startDate!.getTime())) : null;
     const latest = spans.length

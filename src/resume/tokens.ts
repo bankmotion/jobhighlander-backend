@@ -1,29 +1,10 @@
-/**
- * The parameter space a preset draws from.
- *
- * Everything here is a compiled map keyed by a short string. A preset row in the
- * database supplies the KEY; it never supplies a value that reaches the renderer
- * unvalidated. An unknown key falls back to the default, so a bad or archived
- * row produces a plain-looking resume rather than a crash or an injection.
- *
- * These become CSS custom properties, never Tailwind utility classes: Tailwind
- * v4 scans source statically, so a class assembled at runtime compiles to
- * nothing and would ship an unstyled document that still looks like a PDF.
- */
 
 export interface FontPair {
   name: string;
-  /** Headings. Only faces present on a stock Windows/macOS install. */
   display: string;
-  /** Body copy. */
   body: string;
 }
 
-/**
- * No webfonts. The PDF is rendered with `setContent`, so there is no origin to
- * fetch one from, and a failed font request degrades silently to a fallback the
- * design was never tested against.
- */
 export const FONT_PAIRS = {
   'serif-classic': {
     name: 'Georgia / Georgia',
@@ -57,14 +38,10 @@ export const DEFAULT_FONT_PAIR: FontPairKey = 'serif-classic';
 
 export interface Density {
   name: string;
-  /** Base body size in pt. */
   fontSize: number;
   lineHeight: number;
-  /** Page padding in px at 96dpi. */
   pad: number;
-  /** Gap between sections in px. */
   sectionGap: number;
-  /** Gap between entries in px. */
   entryGap: number;
 }
 
@@ -77,8 +54,6 @@ export const DENSITIES = {
 export type DensityKey = keyof typeof DENSITIES;
 export const DEFAULT_DENSITY: DensityKey = 'regular';
 
-/** Curated accents. A preset may also carry any other hex; this is the palette
- *  the picker offers, not a whitelist. */
 export const ACCENTS = {
   ink: '#111111',
   navy: '#1e3a5f',
@@ -88,7 +63,6 @@ export const ACCENTS = {
   bronze: '#7a5326',
 } as const;
 
-/** Reject anything that is not a plain hex colour before it reaches the CSS. */
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
 export interface ResolvedTokens {
@@ -110,7 +84,6 @@ export function resolveTokens(preset: {
   return { fonts, density, accent };
 }
 
-/** The custom-property block every layout's CSS is written against. */
 export function tokensToCss({ fonts, density, accent }: ResolvedTokens): string {
   return `
     --font-display: ${fonts.display};

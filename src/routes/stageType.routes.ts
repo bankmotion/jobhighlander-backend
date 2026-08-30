@@ -18,15 +18,6 @@ const body = z.object({
   archived: z.boolean().optional(),
 });
 
-/**
- * GET /api/stage-types — any signed-in user.
- *
- * The badge picker on the timeline needs this, and every role that can work a
- * timeline must be able to load it. Only writing is restricted.
- *
- * `?includeArchived=1` is what the admin screen asks for; the picker never
- * does, because offering a retired badge is how it comes back into use.
- */
 stageTypeRouter.get('/', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const includeArchived = req.query.includeArchived === '1';
@@ -41,7 +32,6 @@ stageTypeRouter.get('/', requireAuth, async (req: Request, res: Response, next: 
   }
 });
 
-/** POST /api/stage-types — add a badge (super admin). */
 stageTypeRouter.post('/', requireSuperAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = body.safeParse(req.body);
@@ -56,7 +46,6 @@ stageTypeRouter.post('/', requireSuperAdmin, async (req: Request, res: Response,
   }
 });
 
-/** PUT /api/stage-types/:id — rename, recolour, reorder or archive. */
 stageTypeRouter.put('/:id', requireSuperAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = Number(req.params.id);
@@ -72,13 +61,6 @@ stageTypeRouter.put('/:id', requireSuperAdmin, async (req: Request, res: Respons
   }
 });
 
-/**
- * DELETE /api/stage-types/:id — delete when unused, archive when not.
- *
- * The response says which happened so the UI can report it honestly: a badge
- * that quietly stayed on twelve existing steps must not be announced as
- * deleted.
- */
 stageTypeRouter.delete('/:id', requireSuperAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = Number(req.params.id);
@@ -91,7 +73,6 @@ stageTypeRouter.delete('/:id', requireSuperAdmin, async (req: Request, res: Resp
   }
 });
 
-/** POST /api/stage-types/seed — restore any missing default. Never overwrites. */
 stageTypeRouter.post('/seed', requireSuperAdmin, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const added = await stageTypeService.seed();

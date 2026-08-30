@@ -2,7 +2,6 @@ import { presetService } from '../services/preset.service';
 import { prisma } from '../lib/prisma';
 import { logger } from '../services/logger.service';
 
-/** Seed the starter presets. Idempotent — `npx tsx src/scripts/seed-presets.ts`. */
 async function main() {
   const n = await presetService.seed();
   const all = await presetService.list();

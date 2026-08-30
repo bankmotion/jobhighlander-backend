@@ -6,15 +6,8 @@ import { requireAuth, requireRole, type AuthedRequest } from '../middleware/auth
 
 export const profileRouter = Router();
 
-/**
- * Reading a profile is open to every signed-in role — a bidder needs the
- * profiles they were invited to in order to generate resumes. The service
- * scopes each read to "owned or accepted invitation", so an open route is not
- * an open table.
- */
 const requireUser = [requireAuth];
 
-/** Creating and editing profiles stays with admins, and only their own. */
 const requireAdmin = [requireAuth, requireRole('admin', 'super_admin')];
 
 const dateStr = z
@@ -29,12 +22,6 @@ const workSchema = z.object({
   endDate: dateStr,
 });
 
-/**
- * Education is collected at YEAR granularity, so 'YYYY' is what the editor
- * sends. The month/day forms stay accepted because rows written before that
- * change still hold them, and a PUT that echoes a profile back must not be
- * rejected for faithfully returning what it was given.
- */
 const yearStr = z
   .string()
   .regex(/^\d{4}(-\d{2}(-\d{2})?)?$/, 'expected YYYY')
@@ -46,8 +33,6 @@ const eduSchema = z.object({
   degree: z.string().max(255).nullish(),
   startDate: yearStr,
   endDate: yearStr,
-  /** Whether this entry's dates mean a year or a month. Optional so an older
-   *  client that never sends it keeps the month behaviour it already had. */
   datePrecision: z.enum(['year', 'month']).nullish(),
 });
 
@@ -62,7 +47,6 @@ const profileSchema = z.object({
   educations: z.array(eduSchema).max(50).optional(),
 });
 
-/** GET /api/profiles — profiles the caller may use (owned + accepted invites). */
 profileRouter.get('/', requireUser, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     res.json(await profileService.list(req.user!.id));
@@ -71,7 +55,6 @@ profileRouter.get('/', requireUser, async (req: AuthedRequest, res: Response, ne
   }
 });
 
-/** POST /api/profiles — create a profile. */
 profileRouter.post('/', requireAdmin, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = profileSchema.safeParse(req.body);
@@ -84,15 +67,6 @@ profileRouter.post('/', requireAdmin, async (req: AuthedRequest, res: Response, 
   }
 });
 
-/**
- * Why a write was refused: 403 for a profile the caller can see but does not
- * own, 404 for one they cannot see at all.
- *
- * The 404 half is the important one — it is what stops the endpoint confirming
- * that a profile id exists to someone with no access to it. The 403 half leaks
- * nothing extra, since the caller can already GET that same profile, and it is
- * the only thing that explains an invitee's save doing nothing.
- */
 async function refusal(id: number, userId: number, res: Response): Promise<Response> {
   const access = await profileService.accessLevel(id, userId);
   if (access === 'invitee') {
@@ -103,12 +77,6 @@ async function refusal(id: number, userId: number, res: Response): Promise<Respo
   return res.status(404).json({ error: 'Profile not found' });
 }
 
-/**
- * GET /api/profiles/:id — one profile with work experience + education.
- *
- * Carries `canEdit` so the client can render the read-only view for an invitee
- * without a second request (the PUT is refused regardless).
- */
 profileRouter.get('/:id', requireUser, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const id = Number(req.params.id);
@@ -121,7 +89,6 @@ profileRouter.get('/:id', requireUser, async (req: AuthedRequest, res: Response,
   }
 });
 
-/** PUT /api/profiles/:id — update a profile (replaces nested entries). */
 profileRouter.put('/:id', requireAdmin, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const id = Number(req.params.id);
@@ -137,7 +104,6 @@ profileRouter.put('/:id', requireAdmin, async (req: AuthedRequest, res: Response
   }
 });
 
-/** DELETE /api/profiles/:id — remove a profile. */
 profileRouter.delete('/:id', requireAdmin, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const id = Number(req.params.id);
@@ -159,7 +125,6 @@ const idParam = (v: string): number | null => {
   return Number.isInteger(n) && n > 0 ? n : null;
 };
 
-/** Map an InvitationError onto its status; anything else is a real 500. */
 function invitationFailure(err: unknown, res: Response, next: NextFunction): void {
   if (err instanceof InvitationError) {
     res.status(err.status).json({ error: err.message });
@@ -168,7 +133,6 @@ function invitationFailure(err: unknown, res: Response, next: NextFunction): voi
   next(err);
 }
 
-/** GET /api/profiles/:id/invitations — who this profile is shared with. */
 profileRouter.get(
   '/:id/invitations',
   requireAdmin,
@@ -183,12 +147,6 @@ profileRouter.get(
   },
 );
 
-/**
- * POST /api/profiles/:id/invitations — invite a user to use this profile.
- *
- * Addressed by email: no endpoint lists accounts to an admin, so inviting
- * cannot double as a way to read the user table.
- */
 profileRouter.post(
   '/:id/invitations',
   requireAdmin,
@@ -206,7 +164,6 @@ profileRouter.post(
   },
 );
 
-/** DELETE /api/profiles/:id/invitations/:userId — withdraw it / revoke access. */
 profileRouter.delete(
   '/:id/invitations/:userId',
   requireAdmin,

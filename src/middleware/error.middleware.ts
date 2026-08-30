@@ -5,17 +5,12 @@ export function notFound(_req: Request, res: Response): void {
   res.status(404).json({ error: 'Not found' });
 }
 
-/** The optional fields Express and body-parser attach to their errors. */
 interface HttpErrorLike {
   status?: unknown;
   statusCode?: unknown;
   type?: unknown;
 }
 
-/**
- * Client-safe text for a 4xx, from a fixed vocabulary — the underlying
- * `err.message` is never echoed back, so nothing internal leaks.
- */
 function clientMessage(type: unknown, status: number): string {
   if (type === 'entity.parse.failed') return 'Malformed JSON body';
   if (type === 'entity.too.large') return 'Payload too large';
@@ -28,12 +23,6 @@ function clientMessage(type: unknown, status: number): string {
   return 'Request error';
 }
 
-/**
- * Terminal error handler. Honours `err.status`/`err.statusCode` so client
- * errors surface as themselves — a malformed body is a 400 and an oversized
- * one a 413, rather than every failure reaching the caller as a 500 with
- * "Internal server error", which is what made those two indistinguishable.
- */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function errorHandler(err: unknown, _req: Request, res: Response, next: NextFunction): void {
   // Past the point of no return: let Express abort the stream.

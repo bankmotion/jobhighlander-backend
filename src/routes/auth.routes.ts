@@ -5,7 +5,6 @@ import { requireAuth, requireRole, type AuthedRequest } from '../middleware/auth
 
 export const authRouter = Router();
 
-/** POST /api/auth/register — first user = super_admin, others = pending guest. */
 authRouter.post('/register', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = z
@@ -22,7 +21,6 @@ authRouter.post('/register', async (req: Request, res: Response, next: NextFunct
   }
 });
 
-/** POST /api/auth/login — approved users only (guests are pending). */
 authRouter.post('/login', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = z
@@ -41,10 +39,6 @@ authRouter.post('/login', async (req: Request, res: Response, next: NextFunction
   }
 });
 
-/**
- * POST /api/auth/google — sign in with a Google ID token (the only sign-in the
- * UI offers). First-time users are created as pending guests awaiting approval.
- */
 authRouter.post('/google', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = z.object({ credential: z.string().min(1) }).safeParse(req.body);
@@ -69,12 +63,10 @@ authRouter.post('/google', async (req: Request, res: Response, next: NextFunctio
   }
 });
 
-/** GET /api/auth/me — current user from the Bearer token. */
 authRouter.get('/me', requireAuth, (req: AuthedRequest, res: Response) => {
   res.json({ user: req.user });
 });
 
-/** GET /api/auth/users — list all users (super_admin only). */
 authRouter.get('/users', requireAuth, requireRole('super_admin'), async (_req, res, next) => {
   try {
     res.json(await authService.listUsers());
@@ -83,7 +75,6 @@ authRouter.get('/users', requireAuth, requireRole('super_admin'), async (_req, r
   }
 });
 
-/** POST /api/auth/users/:id/role — approve/assign a role. */
 authRouter.post(
   '/users/:id/role',
   requireAuth,

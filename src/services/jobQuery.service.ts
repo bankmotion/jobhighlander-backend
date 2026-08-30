@@ -7,13 +7,6 @@ import { usableProfileWhere } from './profile.service';
 import { periodOf, yearsOf, profileIdentity, ResumeInputError } from './resume.service';
 import type { TailoredResume } from '../schemas/resume.schema';
 
-/**
- * Which of the three context documents existed when a question was answered.
- *
- * A type alias, not an interface, on purpose: Prisma's Json input type requires
- * an index signature, and TypeScript gives one implicitly to object type
- * aliases but never to interfaces. As an interface this will not compile.
- */
 export type QueryContext = {
   profile: boolean;
   resume: boolean;
@@ -33,10 +26,8 @@ export interface JobQueryRow {
   createdAt: Date;
 }
 
-/** How much of the posting travels with the question. */
 const JOB_DESCRIPTION_LIMIT = 24_000;
 
-/** Ceiling on the answer. Long enough for a drafted email, short of an essay. */
 const MAX_ANSWER_TOKENS = 3_000;
 
 const rowSelect = {
@@ -85,19 +76,6 @@ function shape(r: RawRow): JobQueryRow {
   };
 }
 
-/**
- * Free-form questions about one posting, answered against everything the app
- * already knows about the candidate.
- *
- * EACH QUESTION IS ANSWERED ALONE. Earlier answers are not fed back in, so this
- * is a log rather than a conversation. Two reasons: a row stays re-readable on
- * its own months later, and the cost of a question stays flat instead of
- * growing with the length of the thread — which, on a per-token bill, is the
- * difference between a feature people use freely and one they ration.
- *
- * Scoped through `usableProfileWhere` like every other per-profile feature: a
- * user may ask against a profile they own or one they were invited to.
- */
 export const jobQueryService = {
   async ask(
     jobId: number,
@@ -158,14 +136,6 @@ export const jobQueryService = {
       )
       .join('\n');
 
-    /**
-     * Absence is stated, never left blank.
-     *
-     * An omitted section reads to the model as "nothing to say here"; a section
-     * that says the document has not been generated tells it not to guess at
-     * the contents — which is exactly the failure this feature would otherwise
-     * produce, confidently describing a resume nobody has written yet.
-     */
     const resumeBlock = resume
       ? `TAILORED RESUME already generated for this posting (JSON):\n"""\n${JSON.stringify(
           resume.data as TailoredResume,
@@ -277,7 +247,6 @@ ${job.description.slice(0, JOB_DESCRIPTION_LIMIT)}
     return shape(created as RawRow);
   },
 
-  /** The log for one (job, profile), newest first. */
   async list(jobId: number, profileId: number, userId: number): Promise<JobQueryRow[]> {
     const rows = await prisma.jobAiQuery.findMany({
       where: { jobId, profileId, profile: usableProfileWhere(userId) },
@@ -287,11 +256,6 @@ ${job.description.slice(0, JOB_DESCRIPTION_LIMIT)}
     return rows.map((r) => shape(r as RawRow));
   },
 
-  /**
-   * How many questions each of `jobIds` has. One query for a whole page, so the
-   * list can badge cards without a request each — mirroring
-   * `applicationService.statusFor`.
-   */
   async countsFor(
     jobIds: number[],
     profileId: number,
@@ -313,7 +277,6 @@ ${job.description.slice(0, JOB_DESCRIPTION_LIMIT)}
     return out;
   },
 
-  /** Delete one entry from the log. Returns false when there was nothing to delete. */
   async remove(id: number, userId: number): Promise<boolean> {
     const row = await prisma.jobAiQuery.findFirst({
       where: { id, profile: usableProfileWhere(userId) },
@@ -325,12 +288,6 @@ ${job.description.slice(0, JOB_DESCRIPTION_LIMIT)}
   },
 };
 
-/**
- * Anthropic errors arrive as `status: 400 invalid_request_error` for things a
- * developer must fix (no credits, bad key). The generic handler renders that as
- * "Bad request", which sends someone hunting through their own payload. Same
- * mapping `generation.service.ts` applies, for the same reason. Always throws.
- */
 function mapProviderError(err: unknown): never {
   const e = err as {
     status?: number;

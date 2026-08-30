@@ -12,13 +12,6 @@ export interface RenderInput {
   pageSize?: PageSize;
 }
 
-/**
- * Render a resume to a complete, self-contained HTML document.
- *
- * Self-contained matters: the PDF is produced with `setContent`, so there is no
- * origin to resolve a stylesheet, font or image against. Anything not inline
- * silently fails and yields an unstyled document that still looks like a PDF.
- */
 export function renderResumeHtml({
   resume,
   name,

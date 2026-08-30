@@ -5,19 +5,6 @@ import { requireAuth, requireRole, type AuthedRequest } from '../middleware/auth
 
 export const invitationRouter = Router();
 
-/**
- * The invitee's half of the invitation flow, plus the owner's overview.
- *
- * Sending and withdrawing invitations lives under /api/profiles/:id/invitations,
- * because those act on a profile the caller owns. Everything here acts on
- * invitations addressed TO the caller, which is why it is open to every role.
- */
-
-/**
- * GET /api/invitations/sent — the caller's profiles with who each is shared
- * with. Backs the bidder-management page; admins only, since only they own
- * profiles.
- */
 invitationRouter.get(
   '/sent',
   requireAuth,
@@ -33,7 +20,6 @@ invitationRouter.get(
 
 const listQuery = z.object({ status: z.enum(['pending', 'accepted', 'declined']).optional() });
 
-/** GET /api/invitations?status= — invitations addressed to the caller. */
 invitationRouter.get('/', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = listQuery.safeParse(req.query);
@@ -44,7 +30,6 @@ invitationRouter.get('/', requireAuth, async (req: AuthedRequest, res: Response,
   }
 });
 
-/** GET /api/invitations/pending-count — for the nav badge. */
 invitationRouter.get(
   '/pending-count',
   requireAuth,
@@ -57,12 +42,6 @@ invitationRouter.get(
   },
 );
 
-/**
- * POST /api/invitations/:id/respond — accept or decline.
- *
- * Accepting is what actually grants access; until then the invitation shows on
- * the invitee's page but the profile itself stays out of every scoped query.
- */
 invitationRouter.post(
   '/:id/respond',
   requireAuth,

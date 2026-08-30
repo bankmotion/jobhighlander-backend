@@ -4,7 +4,6 @@ import { usableProfileWhere } from './profile.service';
 import { logger } from '../services/logger.service';
 import type { TailoredResume } from '../schemas/resume.schema';
 
-/** Thrown for conditions the caller can fix; the route maps these to 4xx. */
 export class ResumeInputError extends Error {
   constructor(
     message: string,
@@ -14,17 +13,6 @@ export class ResumeInputError extends Error {
   }
 }
 
-/**
- * The shipped default lives in prompt.service.ts alongside every other editable
- * instruction, and `promptService.text` falls back to it when no row exists or
- * a super admin has cleared the box. Read per generation rather than cached in
- * a module constant, so an edit takes effect on the next request instead of the
- * next restart.
- */
-
-/** Name + contact line as they appear on the resume. Read from the profile,
- *  never from the request body — these identify a real person and the client
- *  has no business asserting them. */
 export function profileIdentity(p: {
   firstName: string | null; lastName: string | null; email: string | null;
   phone: string | null; location: string | null; linkedin: string | null;
@@ -42,17 +30,6 @@ export function periodOf(start: Date | null, end: Date | null): string {
   return `${start ? fmt(start) : '?'} – ${end ? fmt(end) : 'Present'}`;
 }
 
-/**
- * A period at YEAR granularity, for education.
- *
- * Degrees are awarded by year, not by month — "Sep 2018 – May 2022" claims a
- * precision nobody puts on a resume and that the profile no longer collects.
- * Work experience keeps months, where the exact span does matter.
- *
- * Reads the stored DATE in UTC. Education dates are written as YYYY-01-01, and
- * `getFullYear()` on a local timezone west of UTC would render that as the
- * previous year.
- */
 export function yearsOf(start: Date | null, end: Date | null): string {
   if (!start && !end) return '';
   const y = (d: Date) => String(d.getUTCFullYear());
@@ -61,22 +38,16 @@ export function yearsOf(start: Date | null, end: Date | null): string {
   return `${start ? y(start) : '?'} – ${end ? y(end) : 'Present'}`;
 }
 
-
-
-
-/** What the job list needs to know about a resume without downloading it. */
 export interface ResumeStatus {
   jobId: number;
   templateKey: string;
   model: string;
   updatedAt: Date;
   headline: string;
-  /** Bullets, skills and titles the model drafted rather than read from notes. */
   inferredCount: number;
   reviewNoteCount: number;
 }
 
-/** Total items flagged `inferred` across skills, titles and bullets. */
 function countInferred(d: Partial<TailoredResume> | null): number {
   if (!d) return 0;
   const skills = d.skills?.filter((s) => s.inferred).length ?? 0;
@@ -88,14 +59,6 @@ function countInferred(d: Partial<TailoredResume> | null): number {
   return skills + experience;
 }
 
-/**
- * Save one generated resume for a (profile, job).
- *
- * Upsert, not insert: the pairing is unique, so regenerating rewrites the text
- * in place rather than accumulating drafts. The template is deliberately absent
- * from the update — rewriting the words must not discard the design the user
- * applied to this application.
- */
 export async function saveResume(input: {
   profileId: number;
   jobId: number;
@@ -131,12 +94,6 @@ export async function saveResume(input: {
 }
 
 export const resumeService = {
-  /**
-   * The saved resume for this (profile, job), or null. Exactly one can exist.
-   *
-   * Having none is a normal state rather than an error — the caller renders the
-   * generate prompt instead.
-   */
   async saved(jobId: number, profileId: number, userId: number) {
     const row = await prisma.resume.findFirst({
       where: { jobId, profileId, profile: usableProfileWhere(userId) },
@@ -150,14 +107,6 @@ export const resumeService = {
     return { ...row, templateKey: preset.key };
   },
 
-  /**
-   * Which of `jobIds` already have a resume for this profile.
-   *
-   * One query for a whole page of jobs rather than one request per card. The
-   * full document is deliberately NOT returned — a page of 20 would be hundreds
-   * of kilobytes to render a badge — so the counts the list needs are folded
-   * down here instead.
-   */
   async statusFor(jobIds: number[], profileId: number, userId: number): Promise<Record<number, ResumeStatus>> {
     if (jobIds.length === 0) return {};
 
@@ -185,11 +134,6 @@ export const resumeService = {
     return out;
   },
 
-  /**
-   * Apply a template to the saved resume for this (profile, job). Scoped to
-   * profiles the caller may use, and the key is checked against the catalogue
-   * so a dead one cannot be stored.
-   */
   async setTemplate(jobId: number, profileId: number, userId: number, key: string): Promise<boolean> {
     if ((await presetService.get(key)).key !== key) return false;
     const r = await prisma.resume.updateMany({

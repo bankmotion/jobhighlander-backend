@@ -21,7 +21,6 @@ import { aiUsageRouter } from './routes/aiUsage.routes';
 import { requireAuth } from './middleware/auth.middleware';
 import { notFound, errorHandler } from './middleware/error.middleware';
 
-/** Build the Express application (no listening — kept testable/importable). */
 export function createApp(): Application {
   const app = express();
 

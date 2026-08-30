@@ -2,24 +2,6 @@ import type { TemplateProps } from './types';
 import { Rich } from '../rich';
 import { groupSkills } from '../skills';
 
-/**
- * Creative — a coloured sidebar carrying contact, skills and education, beside
- * a main column of summary and experience.
- *
- * THIS LAYOUT IS NOT ATS-SAFE, and its presets are flagged accordingly.
- *
- * The reason is measured, not folklore: PDF text extraction follows page
- * GEOMETRY, not DOM order. Rendering the main column first in the markup and
- * positioning it second with flex `order` was tested — extraction still returned
- * the sidebar first. There is no markup arrangement that fixes it, so a parser
- * reads skills and education before any employment history.
- *
- * It is built with flex rather than a table deliberately. Both reorder, but a
- * table additionally interleaves cells row-by-row and tears section headings
- * away from their content — flex at least keeps each column intact.
- *
- * Use for a design or marketing role sent directly to a human. Not for a portal.
- */
 export function CreativeLayout({ resume, name, contact }: TemplateProps) {
   return (
     <div className="page">
@@ -37,8 +19,6 @@ export function CreativeLayout({ resume, name, contact }: TemplateProps) {
         {resume.skills.length > 0 && (
           <div className="block">
             <h2>Skills</h2>
-            {/* The sidebar is narrow, so each group gets its own heading and
-                its own short list rather than one long undifferentiated run. */}
             {groupSkills(resume.skills).map((g) => (
               <div key={g.category} className="skill-group">
                 <strong>{g.category}</strong>

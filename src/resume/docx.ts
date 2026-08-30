@@ -1,23 +1,3 @@
-/**
- * Word (.docx) rendering, as a sibling of the PDF path rather than a conversion
- * of it.
- *
- * Both outputs start from the same `TailoredResume` and the same resolved
- * tokens; only the final emitter differs:
- *
- *   TailoredResume ─┬─ React layout → HTML+CSS → Chromium → PDF
- *                   └─ this file                          → DOCX
- *
- * Converting the HTML instead was rejected: Word has no CSS grid or flex, so
- * the multi-column layouts collapse. Building from the structured data gives a
- * real editable document whose paragraphs an ATS can parse.
- *
- * WHAT "MATCHING A TEMPLATE" CAN AND CANNOT MEAN HERE. Word is not a browser.
- * These are approximations tuned to each layout's visual signature — font
- * pairing, accent, heading treatment, and column count — not pixel copies. The
- * places where Word simply has no equivalent are commented at the point of
- * compromise.
- */
 import {
   AlignmentType,
   BorderStyle,
@@ -39,30 +19,15 @@ import { groupSkills } from './skills';
 import { PAGE_PX, type PageSize, type Preset } from './templates/registry';
 import { resolveTokens, type ResolvedTokens } from './tokens';
 
-/* ------------------------------- units ---------------------------------- */
-
-/**
- * Word measures length in twips (1/1440 in) and font size in half-points.
- * The design tokens are px at 96 DPI and pt, so both need converting — and the
- * conversions must stay exact, or the DOCX drifts from the PDF page for page.
- */
 const TWIPS_PER_PX = 15; // 1440 / 96
 const px = (n: number) => Math.round(n * TWIPS_PER_PX);
 const halfPt = (n: number) => Math.round(n * 2);
 
-/** Page box in twips. Mirrors PAGE_PX, which is the same box in px. */
 const PAGE_TWIPS: Record<PageSize, { width: number; height: number }> = {
   letter: { width: px(PAGE_PX.letter.width), height: px(PAGE_PX.letter.height) },
   a4: { width: px(PAGE_PX.a4.width), height: px(PAGE_PX.a4.height) },
 };
 
-/**
- * CSS font stacks resolved to a single face Word can actually use.
- *
- * Helvetica is not installed on Windows, which is where these documents are
- * produced and mostly opened; Chrome already substitutes Arial there, so naming
- * Arial makes the DOCX match the PDF rather than diverge from it.
- */
 function wordFonts(tokens: ResolvedTokens): { display: string; body: string } {
   const pick = (stack: string): string => {
     const first = stack.split(',')[0].replace(/["']/g, '').trim();
@@ -72,19 +37,8 @@ function wordFonts(tokens: ResolvedTokens): { display: string; body: string } {
   return { display: pick(tokens.fonts.display), body: pick(tokens.fonts.body) };
 }
 
-/** `#1e3a5f` → `1E3A5F`, the form docx wants. */
 const hex = (c: string) => c.replace('#', '').toUpperCase();
 
-/* ------------------------------ inline text ----------------------------- */
-
-/**
- * Split model-authored text on the one tag the schema allows into Word runs.
- *
- * Mirrors `Rich` in rich.tsx, and for the same security reason: this string
- * comes from a model working on an attacker-influenceable job posting, so it is
- * PARSED, never injected. Anything that is not the <b> pair is emitted as
- * literal characters.
- */
 export function richRuns(
   text: string,
   base: { font: string; size: number; color?: string; italics?: boolean },
@@ -97,24 +51,13 @@ export function richRuns(
     .filter((r): r is TextRun => r !== null);
 }
 
-/* ------------------------------ primitives ------------------------------ */
-
 interface Ctx {
   t: ResolvedTokens;
   fonts: { display: string; body: string };
-  /** Usable text width in twips — where the right tab stop for dates sits. */
   contentWidth: number;
   accent: string;
 }
 
-/**
- * A role/date line.
- *
- * Done with a RIGHT TAB STOP, not a two-cell table. The classic layout's CSS
- * carries a long comment on why it avoids tables for ATS reasons — extraction
- * interleaves cells row by row — and the same applies in Word. A tab stop keeps
- * the line a single paragraph, so it extracts as one readable line.
- */
 function headLine(ctx: Ctx, left: TextRun[], right: string, spacingBefore = 0): Paragraph {
   return new Paragraph({
     tabStops: [{ type: TabStopType.RIGHT, position: ctx.contentWidth }],
@@ -166,15 +109,8 @@ function impactLine(ctx: Ctx, text: string) {
   });
 }
 
-/* ------------------------ per-layout section headings ------------------- */
-
 type HeadingStyle = 'rule' | 'plain' | 'band';
 
-/**
- * Section heading. The three treatments correspond to what each CSS layout
- * does: a rule beneath (classic), bare accent text (modern), or a tinted band
- * (professional). Creative's sidebar/main headings are handled inline.
- */
 function heading(ctx: Ctx, text: string, style: HeadingStyle, size: number): Paragraph {
   const common = {
     spacing: { before: px(ctx.t.density.sectionGap), after: px(6) },
@@ -205,7 +141,6 @@ function heading(ctx: Ctx, text: string, style: HeadingStyle, size: number): Par
   return new Paragraph(common);
 }
 
-/** Blend a hex colour toward white — the tinted band behind Professional's headings. */
 function tint(color: string, amount: number): string {
   const c = hex(color);
   const mix = (i: number) => {
@@ -216,8 +151,6 @@ function tint(color: string, amount: number): string {
   };
   return `${mix(0)}${mix(2)}${mix(4)}`.toUpperCase();
 }
-
-/* ------------------------------ sections -------------------------------- */
 
 function skillParagraphs(ctx: Ctx, resume: TailoredResume, sep: string): Paragraph[] {
   return groupSkills(resume.skills).map(
@@ -232,7 +165,6 @@ function skillParagraphs(ctx: Ctx, resume: TailoredResume, sep: string): Paragra
   );
 }
 
-/** Experience entries, with the head line composed per layout. */
 function experience(
   ctx: Ctx,
   resume: TailoredResume,
@@ -264,8 +196,6 @@ function educationParagraphs(ctx: Ctx, resume: TailoredResume): Paragraph[] {
   });
   return out;
 }
-
-/* ------------------------------- layouts -------------------------------- */
 
 function classicBody(ctx: Ctx, r: TailoredResume, name: string, contact: string): Paragraph[] {
   const out: Paragraph[] = [
@@ -382,15 +312,6 @@ function professionalBody(ctx: Ctx, r: TailoredResume, name: string, contact: st
   return out;
 }
 
-/**
- * Creative — the coloured sidebar beside a main column.
- *
- * This is the one layout that needs a TABLE: Word has no flex, and a two-column
- * page with a full-bleed shaded column cannot be expressed any other way. That
- * is an acceptable trade here and only here, because Creative is already
- * documented as not ATS-safe (its presets set `atsSafe: false`), so the table's
- * extraction cost lands on a layout that was never for a parser.
- */
 function creativeDoc(ctx: Ctx, r: TailoredResume, name: string, contact: string, pageSize: PageSize) {
   const white = 'FFFFFF';
   const sideWidth = 34;
@@ -483,8 +404,6 @@ function creativeDoc(ctx: Ctx, r: TailoredResume, name: string, contact: string,
   return { children: [table], margin: { top: 0, right: 0, bottom: 0, left: 0 }, pageSize };
 }
 
-/* -------------------------------- entry --------------------------------- */
-
 export interface DocxInput {
   resume: TailoredResume;
   name: string;
@@ -493,7 +412,6 @@ export interface DocxInput {
   pageSize?: PageSize;
 }
 
-/** Render a resume to .docx bytes, approximating the preset's layout. */
 export async function renderResumeDocx({
   resume,
   name,

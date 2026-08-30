@@ -8,28 +8,10 @@ import { requireAuth, type AuthedRequest } from '../middleware/auth.middleware';
 
 export const jobQueryRouter = Router();
 
-/**
- * "Ask AI about this job" — free-form questions against one posting.
- *
- * Open to every signed-in role, like the other per-profile features: the
- * service scopes each call to profiles the caller may use, and bidders are who
- * actually work the postings.
- */
-
 const idParam = z.coerce.number().int().positive();
 
-/**
- * Question length cap, in CHARACTERS.
- *
- * The column is MySQL `TEXT` — 65,535 BYTES, not characters — and utf8mb4
- * spends up to four bytes per character, so the byte-safe ceiling is ~16,383.
- * 4,000 is well under that and is already far more than a question needs; the
- * cap exists to stop someone pasting a whole posting into the box and paying
- * for it twice, since the posting already travels in the system context.
- */
 const QUESTION_MAX_CHARS = 4_000;
 
-/** Map a known error onto its status; anything else is a real 500. */
 function failure(err: unknown, res: Response, next: NextFunction): void {
   if (err instanceof ResumeInputError) {
     res.status(err.status).json({ error: err.message });
@@ -44,7 +26,6 @@ function failure(err: unknown, res: Response, next: NextFunction): void {
   next(err);
 }
 
-/** POST /api/job-queries — ask a question and store the answer. */
 jobQueryRouter.post('/', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     // Checked before anything else so a server with no key says so, rather than
@@ -71,7 +52,6 @@ jobQueryRouter.post('/', requireAuth, async (req: AuthedRequest, res: Response, 
   }
 });
 
-/** GET /api/job-queries?jobId=&profileId= — the log, newest first. */
 jobQueryRouter.get('/', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = z.object({ jobId: idParam, profileId: idParam }).safeParse(req.query);
@@ -83,13 +63,6 @@ jobQueryRouter.get('/', requireAuth, async (req: AuthedRequest, res: Response, n
   }
 });
 
-/**
- * GET /api/job-queries/counts?profileId=&jobIds=1,2,3 — keyed by job id.
- *
- * Bounded at 100 to match the `pageSize` ceiling on GET /api/jobs; without a
- * cap this is an unbounded `IN (...)` driven straight from the query string.
- * Registered before `/:id` so Express cannot read "counts" as an id.
- */
 jobQueryRouter.get('/counts', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = z
@@ -111,7 +84,6 @@ jobQueryRouter.get('/counts', requireAuth, async (req: AuthedRequest, res: Respo
   }
 });
 
-/** DELETE /api/job-queries/:id — remove one entry from the log. */
 jobQueryRouter.delete('/:id', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const id = idParam.safeParse(req.params.id);

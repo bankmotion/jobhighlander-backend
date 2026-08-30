@@ -1,7 +1,3 @@
-/**
- * Minimal dependency-free structured logger. Keeps a consistent, timestamped
- * shape across the app without pulling in a logging framework.
- */
 type Level = 'debug' | 'info' | 'warn' | 'error';
 
 function emit(level: Level, message: string, meta?: unknown): void {

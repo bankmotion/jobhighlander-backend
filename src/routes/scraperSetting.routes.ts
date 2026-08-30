@@ -7,7 +7,6 @@ export const scraperSettingRouter = Router();
 
 const requireSuper = [requireAuth, requireRole('super_admin')];
 
-/** GET /api/scraper-settings — all scraper settings (super_admin only). */
 scraperSettingRouter.get('/', requireSuper, async (_req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     res.json(await scraperSettingService.list());
@@ -16,7 +15,6 @@ scraperSettingRouter.get('/', requireSuper, async (_req: AuthedRequest, res: Res
   }
 });
 
-/** PUT /api/scraper-settings — upsert settings (super_admin only). */
 scraperSettingRouter.put('/', requireSuper, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = z

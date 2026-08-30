@@ -19,16 +19,13 @@ const listQuerySchema = z.object({
   // '1'/'true' → remote-only. Absent → no remote filter.
   remote: z.string().optional(),
   q: z.string().trim().min(1).optional(),
-  /** all | applied | unapplied — needs `profileId` to mean anything. */
   applied: z.enum(['all', 'applied', 'unapplied']).default('all'),
-  /** all | discarded | undiscarded — likewise per profile. Composes with `applied`. */
   discarded: z.enum(['all', 'discarded', 'undiscarded']).default('all'),
   profileId: z.coerce.number().int().positive().optional(),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(20),
 });
 
-/** GET /api/jobs — paginated, filterable list. */
 jobRouter.get('/', async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = listQuerySchema.safeParse(req.query);
@@ -56,7 +53,6 @@ jobRouter.get('/', async (req: AuthedRequest, res: Response, next: NextFunction)
   }
 });
 
-/** GET /api/jobs/filters — distinct sites & locations for UI dropdowns. */
 jobRouter.get('/filters', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await jobService.filters());
@@ -65,7 +61,6 @@ jobRouter.get('/filters', async (_req: Request, res: Response, next: NextFunctio
   }
 });
 
-/** GET /api/jobs/:id — single job. */
 jobRouter.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = Number(req.params.id);

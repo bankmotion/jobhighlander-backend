@@ -5,20 +5,11 @@ import { requireAuth, type AuthedRequest } from '../middleware/auth.middleware';
 
 export const applicationRouter = Router();
 
-/**
- * "Applied" markers, keyed by (profile, job).
- *
- * Open to every signed-in role: the service scopes each call to profiles the
- * caller may use, so a bidder can mark against a profile shared with them —
- * which is the point, since bidders are who does the applying.
- */
-
 const pairing = z.object({
   jobId: z.coerce.number().int().positive(),
   profileId: z.coerce.number().int().positive(),
 });
 
-/** Map an ApplicationError onto its status; anything else is a real 500. */
 function failure(err: unknown, res: Response, next: NextFunction): void {
   if (err instanceof ApplicationError) {
     res.status(err.status).json({ error: err.message });
@@ -27,7 +18,6 @@ function failure(err: unknown, res: Response, next: NextFunction): void {
   next(err);
 }
 
-/** POST /api/applications — mark a job as applied. Idempotent. */
 applicationRouter.post('/', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = pairing.safeParse(req.body);
@@ -39,7 +29,6 @@ applicationRouter.post('/', requireAuth, async (req: AuthedRequest, res: Respons
   }
 });
 
-/** DELETE /api/applications?jobId=&profileId= — undo a mark. */
 applicationRouter.delete('/', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = pairing.safeParse(req.query);
@@ -54,11 +43,6 @@ applicationRouter.delete('/', requireAuth, async (req: AuthedRequest, res: Respo
   }
 });
 
-/**
- * The list page asks about a whole page of jobs at once. Bounded at 100 to
- * match the `pageSize` ceiling on GET /api/jobs — without a cap this is an
- * unbounded `IN (...)` driven straight from the query string.
- */
 const statusQuery = z.object({
   profileId: z.coerce.number().int().positive(),
   jobIds: z
@@ -69,11 +53,6 @@ const statusQuery = z.object({
     .pipe(z.array(z.number().int().positive()).min(1).max(100)),
 });
 
-/**
- * GET /api/applications/for-job?jobId= — every application on this job across
- * the profiles the caller may use, so a page can say "another of your profiles
- * already applied" rather than only answering for the selected one.
- */
 applicationRouter.get(
   '/for-job',
   requireAuth,
@@ -90,12 +69,6 @@ applicationRouter.get(
   },
 );
 
-/**
- * GET /api/applications/company-history?profileId=&jobIds=1,2,3
- *
- * For each job, the profile's most recent EARLIER application at the same
- * company. Same query shape as /status so the list can fetch both together.
- */
 applicationRouter.get(
   '/company-history',
   requireAuth,
@@ -111,7 +84,6 @@ applicationRouter.get(
   },
 );
 
-/** GET /api/applications/status?profileId=&jobIds=1,2,3 — keyed by job id. */
 applicationRouter.get(
   '/status',
   requireAuth,

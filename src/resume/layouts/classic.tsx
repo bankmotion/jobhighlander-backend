@@ -4,23 +4,6 @@ import { groupSkills } from '../skills';
 
 export type { TemplateProps };
 
-/**
- * Classic ATS — single column, plain text throughout.
- *
- * Every constraint here is one an applicant tracking system actually cares
- * about, measured rather than assumed:
- *  - SINGLE COLUMN. PDF text extraction follows page geometry, not DOM order,
- *    so a sidebar is read before the main column no matter how the markup is
- *    arranged. There is no markup trick that fixes it.
- *  - NO `letter-spacing` on anything. Tracking breaks extraction per-word and
- *    unpredictably — "EDUCATION" shattered into "E D U C AT I O N" at 2px while
- *    "EXPERIENCE" survived 6px. There is no safe value, only zero.
- *  - NO tables. A table layout interleaves cells by row on extraction and tears
- *    headings away from the content beneath them.
- *  - NO icons. Symbol glyphs extract as nothing, so an envelope standing in for
- *    "Email" silently deletes that field from the parsed document.
- *  - Standard section headings, spelled out, so a parser can find them.
- */
 export function ClassicLayout({ resume, name, contact }: TemplateProps) {
   return (
     <div className="page">
@@ -40,9 +23,6 @@ export function ClassicLayout({ resume, name, contact }: TemplateProps) {
       {resume.skills.length > 0 && (
         <section>
           <h2>Skills</h2>
-          {/* One line per group, each a plain comma run: a parser reads it as
-              a list, a human scans the headings, and it survives a column of
-              any width. Chips would look tidier and extract worse. */}
           {groupSkills(resume.skills).map((g) => (
             <p key={g.category}>
               <strong>{g.category}:</strong> {g.names.join(' · ')}
@@ -102,11 +82,6 @@ export function ClassicLayout({ resume, name, contact }: TemplateProps) {
   );
 }
 
-/**
- * Print CSS. Inlined into the document rather than linked — the PDF is rendered
- * with `setContent`, so there is no server to fetch a stylesheet from, and a
- * silent 404 would produce an unstyled resume that still looks like a PDF.
- */
 export const CLASSIC_CSS = `
   @page { size: {{PAGE}}; margin: 0; }
 

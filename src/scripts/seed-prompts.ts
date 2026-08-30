@@ -2,17 +2,6 @@ import { promptService, PROMPT_KEYS } from '../services/prompt.service';
 import { prisma } from '../lib/prisma';
 import { logger } from '../services/logger.service';
 
-/**
- * Report what the `prompts` table holds, and drop rows for retired keys.
- *
- *   npx tsx src/scripts/seed-prompts.ts
- *
- * THIS NO LONGER SEEDS TEXT. The prompt content lives in the database and got
- * there by migration; there is no constant in the codebase for this script to
- * insert, and re-inserting one would overwrite whatever a super admin has since
- * written. If a prompt is missing, run the migrations (`npm run prisma:deploy`)
- * or write it in Admin > Prompts.
- */
 async function main() {
   const pruned = await promptService.pruneRetiredKeys();
   if (pruned) logger.info(`Pruned ${pruned} row(s) for keys the app no longer sends`);

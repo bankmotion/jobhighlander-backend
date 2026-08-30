@@ -20,7 +20,6 @@ export type RegisterResult =
 
 const PUBLIC_USER = { id: true, email: true, role: true, createdAt: true } as const;
 
-/** Lazily built so a missing GOOGLE_CLIENT_ID surfaces at sign-in, not at import. */
 let googleClient: OAuth2Client | null = null;
 function getGoogleClient(): OAuth2Client {
   if (!env.GOOGLE_CLIENT_ID) throw new GoogleNotConfiguredError();
@@ -35,15 +34,6 @@ export class GoogleNotConfiguredError extends Error {
   }
 }
 
-/**
- * Placeholder for the NOT NULL `passwordHash` column on Google-created users.
- *
- * The column is deliberately kept (password sign-in may return later), but a
- * Google user has no password. Storing the bcrypt hash of a random secret means
- * the row satisfies the constraint while being impossible to authenticate
- * against: no password anyone can type will ever match, and `bcrypt.compare`
- * still runs normally rather than throwing on a malformed hash.
- */
 function unusablePasswordHash(): Promise<string> {
   return bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
 }
@@ -65,10 +55,6 @@ export const authService = {
     }
   },
 
-  /**
-   * Register a user. The very first user becomes super_admin (can log in
-   * immediately); everyone else starts as a `guest` awaiting approval.
-   */
   async register(emailRaw: string, password: string): Promise<RegisterResult> {
     const email = emailRaw.toLowerCase().trim();
     if (await prisma.user.findUnique({ where: { email } })) return { status: 'exists' };
@@ -87,7 +73,6 @@ export const authService = {
     };
   },
 
-  /** Validate credentials. Guests are rejected as pending approval. */
   async login(
     emailRaw: string,
     password: string,
@@ -104,15 +89,6 @@ export const authService = {
     };
   },
 
-  /**
-   * Sign in with a Google ID token.
-   *
-   * A first-time Google user is CREATED here, mirroring the password register
-   * flow: the very first user in an empty database becomes super_admin, and
-   * everyone after that lands as a pending `guest` for a super_admin to
-   * approve. Signing in and registering are the same action for Google, so
-   * there is no separate signup step.
-   */
   async loginWithGoogle(idToken: string): Promise<GoogleLoginResult> {
     let payload;
     try {
@@ -155,11 +131,6 @@ export const authService = {
     return prisma.user.findMany({ orderBy: { createdAt: 'asc' }, select: PUBLIC_USER });
   },
 
-  /**
-   * Current identity + role straight from the DB. Used to authorize every
-   * request so a role change takes effect immediately, rather than being
-   * trusted from the (possibly stale) JWT. Returns null if the user is gone.
-   */
   async getAuthUser(id: number): Promise<{ id: number; email: string; role: Role } | null> {
     const user = await prisma.user.findUnique({
       where: { id },
@@ -168,7 +139,6 @@ export const authService = {
     return user ? { id: user.id, email: user.email, role: user.role as Role } : null;
   },
 
-  /** Approve/assign a user's role. Authorization is enforced in the route. */
   setRole(id: number, role: Role) {
     return prisma.user.update({ where: { id }, data: { role }, select: PUBLIC_USER });
   },

@@ -8,23 +8,8 @@ import { renderResumeHtml } from '../resume/render';
 import { PAGE_PX } from '../resume/templates/registry';
 import type { TailoredResume } from '../schemas/resume.schema';
 
-/**
- * Pre-render one thumbnail per preset.
- *
- * Build-time, not on-demand: a picker showing 25 presets would otherwise mean 25
- * Chromium pages per page load. These are written into the frontend's `public/`
- * so Next serves them as ordinary static files.
- *
- *   npx tsx src/scripts/make-thumbnails.ts
- */
-
 const OUT = join(__dirname, '../../../frontend/public/template-thumbs');
 
-/**
- * One fictional candidate across every thumbnail. If each preview showed
- * different content, users would compare the writing instead of the design —
- * which is the one thing a template picker must not do.
- */
 const SAMPLE: TailoredResume = {
   headline: 'Senior Backend Engineer · Go · Kubernetes · AWS',
   summary:

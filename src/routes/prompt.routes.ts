@@ -5,17 +5,8 @@ import { requireAuth, requireRole, type AuthedRequest } from '../middleware/auth
 
 export const promptRouter = Router();
 
-/**
- * Model instructions, editable by super admins only.
- *
- * Deliberately NOT open to admins. A prompt decides what every generated
- * document says on every profile in the app, including profiles its editor was
- * only invited to — that is a wider blast radius than anything else an admin
- * touches, and it belongs with the roles that already own scraper config.
- */
 const superAdminOnly = [requireAuth, requireRole('super_admin')];
 
-/** GET /api/prompts — every editable prompt, stored value or shipped default. */
 promptRouter.get('/', superAdminOnly, async (_req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     res.json(await promptService.list());
@@ -24,13 +15,6 @@ promptRouter.get('/', superAdminOnly, async (_req: AuthedRequest, res: Response,
   }
 });
 
-/**
- * PUT /api/prompts/:key — save an edit.
- *
- * An empty body is REJECTED. The prompt text lives only in the database now, so
- * clearing the box would delete the only copy and break every generation until
- * someone retyped it — there is no shipped default left to fall back to.
- */
 promptRouter.put('/:key', superAdminOnly, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const key = req.params.key;

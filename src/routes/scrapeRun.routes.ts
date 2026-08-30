@@ -4,7 +4,6 @@ import { requireAuth, requireRole, type AuthedRequest } from '../middleware/auth
 
 export const scrapeRunRouter = Router();
 
-/** GET /api/scrape-runs — recent scraper runs (super_admin only). */
 scrapeRunRouter.get(
   '/',
   requireAuth,

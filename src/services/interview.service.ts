@@ -1,7 +1,6 @@
 import { prisma } from '../lib/prisma';
 import { usableProfileWhere } from './profile.service';
 
-/** Where the process as a whole stands. */
 export type InterviewStatus =
   | 'active'
   | 'offer'
@@ -11,7 +10,6 @@ export type InterviewStatus =
   | 'ghosted'
   | 'on_hold';
 
-/** How one step went. `pending` covers both "upcoming" and "no news yet". */
 export type StepResult = 'pending' | 'passed' | 'failed' | 'cancelled';
 
 export interface StageBadge {
@@ -19,7 +17,6 @@ export interface StageBadge {
   key: string;
   name: string;
   color: string;
-  /** Archived types still render on steps that already wear them. */
   archived: boolean;
 }
 
@@ -28,9 +25,7 @@ export interface PanelRow {
   title: string | null;
   note: string | null;
   meetingUrl: string | null;
-  /** UTC instant, or null when nothing is scheduled yet. */
   scheduledAt: Date | null;
-  /** IANA zone the invitation was written in; pairs with `scheduledAt`. */
   timezone: string | null;
   durationMin: number | null;
   sortOrder: number;
@@ -43,14 +38,6 @@ export interface StepRow {
   sortOrder: number;
   stages: StageBadge[];
   panels: PanelRow[];
-  /**
-   * The marker on the rail: the earliest `scheduledAt` among this step's
-   * panels, or null when none of them has a time yet.
-   *
-   * Derived here rather than stored, and derived HERE rather than in the
-   * component, so the rail and any future agenda view can never disagree about
-   * when a step happened.
-   */
   date: Date | null;
 }
 
@@ -66,14 +53,6 @@ export interface InterviewDetail {
   steps: StepRow[];
 }
 
-/**
- * One scheduled sitting as the calendar needs it.
- *
- * Carries more context than `UpcomingPanel` because a month grid shows history
- * as well as what is next: `stepResult` and `interviewStatus` are what let a
- * cancelled round or a dead process render differently from a live one instead
- * of all of them looking equally like something to prepare for.
- */
 export interface CalendarPanel {
   panelId: number;
   interviewId: number;
@@ -92,7 +71,6 @@ export interface CalendarPanel {
   meetingUrl: string | null;
 }
 
-/** One upcoming sitting, across every process the caller can see. */
 export interface UpcomingPanel {
   panelId: number;
   interviewId: number;
@@ -107,7 +85,6 @@ export interface UpcomingPanel {
   meetingUrl: string | null;
 }
 
-/** Raised for a rejected write; the route turns it into a status code. */
 export class InterviewError extends Error {
   constructor(
     message: string,
@@ -118,7 +95,6 @@ export class InterviewError extends Error {
   }
 }
 
-/** Nested select for a whole timeline, used by every read below. */
 const detailSelect = {
   id: true,
   profileId: true,
@@ -179,7 +155,6 @@ type RawInterview = {
   }[];
 };
 
-/** Flatten the join rows and derive each step's date. */
 function shape(row: RawInterview): InterviewDetail {
   return {
     id: row.id,
@@ -208,27 +183,7 @@ function shape(row: RawInterview): InterviewDetail {
   };
 }
 
-/**
- * Interview timelines.
- *
- * Every method is scoped through `usableProfileWhere`, exactly like
- * `applicationService`: a user reaches a timeline through a profile they own OR
- * one they were invited to. A shared profile's whole team works one process
- * together, so this is not an ownership check but a "may you use this profile"
- * check — the same rule that governs marking applied and generating a resume.
- */
 export const interviewService = {
-  /**
-   * Open a timeline for a job this profile has applied to.
-   *
-   * Requires the `JobApplication` to exist. That is the ONLY place the
-   * applied-first rule is enforced — `interviews` has no foreign key to
-   * `job_applications`, deliberately, so that undoing an applied mark cannot
-   * cascade a whole interview history into nothing.
-   *
-   * Idempotent: opening twice returns the existing timeline rather than
-   * failing, so a double-click or a stale tab does not surface an error.
-   */
   async open(jobId: number, profileId: number, userId: number): Promise<InterviewDetail> {
     const profile = await prisma.profile.findFirst({
       where: { id: profileId, ...usableProfileWhere(userId) },
@@ -268,7 +223,6 @@ export const interviewService = {
     return this.get(created.id, userId);
   },
 
-  /** One timeline by id, or a 404 if the caller may not see it. */
   async get(id: number, userId: number): Promise<InterviewDetail> {
     const row = await prisma.interview.findFirst({
       where: { id, profile: usableProfileWhere(userId) },
@@ -278,7 +232,6 @@ export const interviewService = {
     return shape(row as RawInterview);
   },
 
-  /** The timeline for one (job, profile), or null when none has been opened. */
   async forJob(jobId: number, profileId: number, userId: number): Promise<InterviewDetail | null> {
     const row = await prisma.interview.findFirst({
       where: { jobId, profileId, profile: usableProfileWhere(userId) },
@@ -287,11 +240,6 @@ export const interviewService = {
     return row ? shape(row as RawInterview) : null;
   },
 
-  /**
-   * Which of `jobIds` this profile has a timeline for. One query for a whole
-   * page, mirroring `applicationService.statusFor`, so the list can badge cards
-   * without a request each.
-   */
   async statusFor(
     jobIds: number[],
     profileId: number,
@@ -316,7 +264,6 @@ export const interviewService = {
     return out;
   },
 
-  /** Move the whole process to a new status. */
   async setStatus(id: number, status: InterviewStatus, userId: number): Promise<InterviewDetail> {
     await assertInterview(id, userId);
     await prisma.interview.update({
@@ -326,21 +273,12 @@ export const interviewService = {
     return this.get(id, userId);
   },
 
-  /** Delete a timeline and everything under it. */
   async remove(id: number, userId: number): Promise<boolean> {
     await assertInterview(id, userId);
     await prisma.interview.delete({ where: { id } });
     return true;
   },
 
-  /**
-   * Insert a step at `position` (0 = before the first, n = after the last).
-   *
-   * The shift-then-insert is one UPDATE plus one INSERT inside a transaction,
-   * which keeps `sortOrder` contiguous without rewriting rows that did not
-   * move. Contiguity is what lets the UI place an insert button in every gap
-   * and pass the gap's index straight through as `position`.
-   */
   async addStep(
     interviewId: number,
     input: { position?: number; title?: string | null; stageTypeIds?: number[] },
@@ -374,11 +312,6 @@ export const interviewService = {
     return this.get(interviewId, userId);
   },
 
-  /**
-   * Update a step. `stageTypeIds` REPLACES the badge set when present and is
-   * left alone when absent — the picker always submits the full set, so a
-   * merge would make removing the last badge impossible.
-   */
   async updateStep(
     stepId: number,
     input: { title?: string | null; result?: StepResult; stageTypeIds?: number[] },
@@ -410,7 +343,6 @@ export const interviewService = {
     return this.get(step.interviewId, userId);
   },
 
-  /** Delete a step (and its panels), closing the gap it leaves in the order. */
   async removeStep(stepId: number, userId: number): Promise<InterviewDetail> {
     const step = await assertStep(stepId, userId);
 
@@ -428,7 +360,6 @@ export const interviewService = {
     return this.get(step.interviewId, userId);
   },
 
-  /** Insert a panel at `position` within its step. Same shift as `addStep`. */
   async addPanel(
     stepId: number,
     input: { position?: number } & PanelInput,
@@ -454,11 +385,6 @@ export const interviewService = {
     return this.get(step.interviewId, userId);
   },
 
-  /**
-   * Update a panel. Only the keys present in `input` are written, so clearing
-   * a field means sending it as null — an absent key leaves it untouched.
-   * Every field being optional, that distinction is the whole contract here.
-   */
   async updatePanel(panelId: number, input: PanelInput, userId: number): Promise<InterviewDetail> {
     const panel = await assertPanel(panelId, userId);
     const data = panelData(input);
@@ -473,7 +399,6 @@ export const interviewService = {
     return this.get(panel.interviewId, userId);
   },
 
-  /** Delete a panel, closing the gap in its step's order. */
   async removePanel(panelId: number, userId: number): Promise<InterviewDetail> {
     const panel = await assertPanel(panelId, userId);
 
@@ -491,13 +416,6 @@ export const interviewService = {
     return this.get(panel.interviewId, userId);
   },
 
-  /**
-   * Everything scheduled in the next `days`, across every process the caller
-   * can reach. Reads `interview_panels.scheduled_at` through its own index.
-   *
-   * Closed processes are excluded: a sitting on a withdrawn or rejected
-   * application is not something to prepare for.
-   */
   async upcoming(userId: number, days = 7): Promise<UpcomingPanel[]> {
     const now = new Date();
     const until = new Date(now.getTime() + days * 86_400_000);
@@ -549,19 +467,6 @@ export const interviewService = {
     }));
   },
 
-  /**
-   * Every scheduled sitting between two instants, across every process the
-   * caller can reach. Backs the calendar.
-   *
-   * UNLIKE `upcoming`, this includes the PAST and includes CLOSED processes.
-   * A calendar is a record as much as a plan — "when did I interview with
-   * them" is the question it gets asked once a process is over — so filtering
-   * to live ones would empty out exactly the months worth looking back at.
-   * Each row carries its step result and process status so the UI can render
-   * the dead ones as dead rather than hiding them.
-   *
-   * The range is bounded by the caller; the route caps it.
-   */
   async calendar(
     userId: number,
     from: Date,
@@ -637,10 +542,6 @@ export const interviewService = {
     });
   },
 
-  /**
-   * Every timeline the caller can reach, newest activity first. Backs the
-   * `/interviews` index — one row per process, no steps loaded.
-   */
   async list(userId: number, profileId?: number) {
     const rows = await prisma.interview.findMany({
       where: {
@@ -674,18 +575,12 @@ export const interviewService = {
       status: r.status as InterviewStatus,
       lastActivityAt: r.lastActivityAt,
       steps: r._count.steps,
-      /**
-       * No movement in three weeks on a live process. Not a status the user
-       * set — a hint the UI shows so a silently-dropped application surfaces
-       * instead of sitting in the list looking healthy forever.
-       */
       stale:
         r.status === 'active' && Date.now() - r.lastActivityAt.getTime() > 21 * 86_400_000,
     }));
   },
 };
 
-/** The writable panel fields. Absent = leave alone; null = clear. */
 export interface PanelInput {
   title?: string | null;
   note?: string | null;
@@ -695,7 +590,6 @@ export interface PanelInput {
   durationMin?: number | null;
 }
 
-/** Build a Prisma `data` object containing only the keys actually supplied. */
 function panelData(input: PanelInput): Record<string, unknown> {
   const data: Record<string, unknown> = {};
   if (input.title !== undefined) data.title = clean(input.title);
@@ -707,12 +601,6 @@ function panelData(input: PanelInput): Record<string, unknown> {
   return data;
 }
 
-/**
- * Trim, and treat an emptied box as cleared rather than as the empty string.
- *
- * Both read as "nothing" in the UI, but only null sorts and counts as absent —
- * an empty string would make `note IS NOT NULL` true for a card with no note.
- */
 function clean(v: string | null | undefined): string | null {
   if (v == null) return null;
   const t = v.trim();
@@ -721,7 +609,6 @@ function clean(v: string | null | undefined): string | null {
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
-/** Drop ids that no longer exist, so a stale picker cannot fail the whole write. */
 async function existingStageTypeIds(ids: number[]): Promise<number[]> {
   const unique = [...new Set(ids)];
   if (unique.length === 0) return [];
@@ -733,7 +620,6 @@ async function existingStageTypeIds(ids: number[]): Promise<number[]> {
   return unique.filter((id) => ok.has(id));
 }
 
-/** 404 unless the caller may use the profile this timeline belongs to. */
 async function assertInterview(id: number, userId: number): Promise<{ id: number }> {
   const row = await prisma.interview.findFirst({
     where: { id, profile: usableProfileWhere(userId) },
@@ -743,7 +629,6 @@ async function assertInterview(id: number, userId: number): Promise<{ id: number
   return row;
 }
 
-/** Same check one level down, returning what the reorder needs. */
 async function assertStep(
   stepId: number,
   userId: number,
@@ -756,7 +641,6 @@ async function assertStep(
   return row;
 }
 
-/** Same check two levels down. */
 async function assertPanel(
   panelId: number,
   userId: number,

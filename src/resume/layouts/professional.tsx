@@ -2,15 +2,6 @@ import type { TemplateProps } from './types';
 import { Rich } from '../rich';
 import { groupSkills } from '../skills';
 
-/**
- * Professional — centred name lockup, a tinted band behind each section
- * heading, and dates in a fixed right-hand column. Reads as executive/consulting
- * rather than engineering.
- *
- * The date column is done with flex, NOT a table: a table layout extracts by
- * interleaving cells row-by-row, which tears each heading away from the content
- * beneath it. Flex degrades to plain reading order instead.
- */
 export function ProfessionalLayout({ resume, name, contact }: TemplateProps) {
   return (
     <div className="page">

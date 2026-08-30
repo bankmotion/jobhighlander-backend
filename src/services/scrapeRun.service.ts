@@ -5,13 +5,7 @@ export interface ScrapeRunFilters {
   statuses?: string[];
 }
 
-/** Read model for scraper run logs (surfaced on the super-admin dashboard). */
 export const scrapeRunService = {
-  /** One page of runs, newest first, plus the totals and the filter options.
-   *
-   *  Filtering is done in SQL rather than in the client: the list is paginated,
-   *  so filtering the fetched page would silently miss every older match.
-   */
   async list(page = 1, pageSize = 25, filters: ScrapeRunFilters = {}) {
     const take = Math.min(Math.max(pageSize, 1), 100);
     const current = Math.max(page, 1);

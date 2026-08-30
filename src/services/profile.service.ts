@@ -1,14 +1,5 @@
 import { prisma } from '../lib/prisma';
 
-/**
- * Accepts 'YYYY' (education), 'YYYY-MM' (work) or 'YYYY-MM-DD'; null =
- * open/Present.
- *
- * A bare year widens to January 1st. The column stays a DATE, so year-only
- * entries are stored as YYYY-01-01 and read back through `yearsOf`, which
- * prints only the year — no migration, and nothing re-interprets the day part
- * as meaningful.
- */
 function toDate(s?: string | null): Date | null {
   if (!s) return null;
   const iso = /^\d{4}$/.test(s) ? `${s}-01-01` : /^\d{4}-\d{2}$/.test(s) ? `${s}-01` : s;
@@ -33,8 +24,6 @@ export interface EduInput {
   degree?: string | null;
   startDate?: string | null;
   endDate?: string | null;
-  /** 'year' or 'month'. Absent = 'month', which is how rows read before the
-   *  choice existed. */
   datePrecision?: string | null;
 }
 export interface ProfileInput {
@@ -84,16 +73,6 @@ const profileFields = (input: ProfileInput) => ({
   location: clean(input.location),
 });
 
-/**
- * Every profile this user may USE — their own, plus the ones they have accepted
- * an invitation to. "Use" means read it and generate resumes from it; it never
- * means edit it.
- *
- * Exported because the scope has to be identical everywhere a profile is served
- * (resumes, presets, PDF rendering). A second hand-written `OR` somewhere else
- * is how an invitee ends up able to read a profile but not print it — or, worse,
- * how a revoked one keeps working on the endpoint that was forgotten.
- */
 export const usableProfileWhere = (userId: number) => ({
   OR: [
     { ownerId: userId },
@@ -101,7 +80,6 @@ export const usableProfileWhere = (userId: number) => ({
   ],
 });
 
-/** Profiles this user may EDIT or DELETE — owned only. Invitees are read-only. */
 export const ownedProfileWhere = (ownerId: number) => ({ ownerId });
 
 const summarySelect = {
@@ -116,21 +94,12 @@ const summarySelect = {
   _count: { select: { workExperiences: true, educations: true } },
 } as const;
 
-/** A summary plus whether THIS caller may edit it, so the UI never has to guess. */
 const withAccess = <T extends { ownerId: number }>(row: T, userId: number) => ({
   ...row,
   canEdit: row.ownerId === userId,
 });
 
-/**
- * Read/use is invitation-aware; create/update/delete stay owner-only.
- *
- * Which of `usableProfileWhere` / `ownedProfileWhere` a method uses IS its
- * permission model — there is no separate check elsewhere, so changing one here
- * changes what invitees can do.
- */
 export const profileService = {
-  /** Profiles the user can use: owned first, then accepted invitations. */
   async list(userId: number) {
     const rows = await prisma.profile.findMany({
       where: usableProfileWhere(userId),
@@ -172,16 +141,6 @@ export const profileService = {
     });
   },
 
-  /**
-   * What this user may do with this profile: own it, hold an accepted
-   * invitation to it, or neither.
-   *
-   * Used only to answer a REFUSED write honestly. A caller who can already read
-   * the profile learns nothing from a 403 that a 200 on GET did not already
-   * tell them, and "you cannot edit a profile you were invited to" is the one
-   * message that explains why their save did nothing — where a bare 404 reads
-   * as data loss.
-   */
   async accessLevel(id: number, userId: number): Promise<'owner' | 'invitee' | 'none'> {
     const profile = await prisma.profile.findFirst({
       where: { id, ...usableProfileWhere(userId) },
@@ -191,7 +150,6 @@ export const profileService = {
     return profile.ownerId === userId ? 'owner' : 'invitee';
   },
 
-  /** Owner-only: an invitee may read this profile but never rewrite it. */
   async update(id: number, ownerId: number, input: ProfileInput) {
     const existing = await prisma.profile.findFirst({
       where: { id, ...ownedProfileWhere(ownerId) },
@@ -214,7 +172,6 @@ export const profileService = {
     return this.get(id, ownerId);
   },
 
-  /** Owner-only. Cascades take the invitations and resumes with it. */
   async remove(id: number, ownerId: number): Promise<boolean> {
     const r = await prisma.profile.deleteMany({ where: { id, ...ownedProfileWhere(ownerId) } });
     return r.count > 0;

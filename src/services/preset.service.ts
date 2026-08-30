@@ -3,14 +3,7 @@ import { ownedProfileWhere, usableProfileWhere } from './profile.service';
 import { FALLBACK_PRESET, LAYOUTS, type Preset } from '../resume/templates/registry';
 import { ACCENTS, DENSITIES, FONT_PAIRS } from '../resume/tokens';
 
-/**
- * Presets are DATA (rows) built from LAYOUTS (compiled components). Adding one
- * is an insert; adding a layout is a deploy. Everything below assumes a row can
- * be wrong — an unknown layout, font or density degrades to the default rather
- * than failing a render.
- */
 export const presetService = {
-  /** Everything the picker shows, ordered for display. */
   async list(): Promise<Preset[]> {
     const rows = await prisma.templatePreset.findMany({
       where: { archived: false },
@@ -19,18 +12,12 @@ export const presetService = {
     return rows.length ? rows.map(toPreset) : [FALLBACK_PRESET];
   },
 
-  /** One preset by key, or the fallback when it is missing or archived. */
   async get(key: string | null | undefined): Promise<Preset> {
     if (!key) return FALLBACK_PRESET;
     const row = await prisma.templatePreset.findFirst({ where: { key, archived: false } });
     return row ? toPreset(row) : FALLBACK_PRESET;
   },
 
-  /**
-   * The preset a profile renders with. Scoped to profiles the caller may USE,
-   * so an invitee's resumes render in the design the owner chose rather than
-   * silently falling back to the built-in default.
-   */
   async forProfile(profileId: number, userId: number): Promise<Preset> {
     const profile = await prisma.profile.findFirst({
       where: { id: profileId, ...usableProfileWhere(userId) },
@@ -39,13 +26,6 @@ export const presetService = {
     return this.get(profile?.defaultTemplateKey);
   },
 
-  /**
-   * Set a profile's default. Rejects an unknown key rather than storing it.
-   *
-   * OWNER-scoped, unlike `forProfile`: the default is part of the profile, and
-   * an invitee changing it would change how everyone else's resumes render.
-   * They can still pick a template per resume — that writes on the resume row.
-   */
   async setDefault(profileId: number, ownerId: number, key: string): Promise<boolean> {
     const exists = await prisma.templatePreset.findFirst({
       where: { key, archived: false },
@@ -59,7 +39,6 @@ export const presetService = {
     return r.count > 0;
   },
 
-  /** Seed the starter set. Idempotent — safe to re-run after adding layouts. */
   async seed(): Promise<number> {
     let n = 0;
     for (const p of SEED) {
@@ -89,12 +68,6 @@ function toPreset(r: {
   };
 }
 
-/**
- * Five presets in the `classic` category, all on the one layout that exists.
- * They differ on accent, type pairing and density — which is the whole point of
- * the parameter engine: the visual range comes from tokens, not from five
- * near-identical components nobody can maintain.
- */
 const SEED = [
   // classic - serif, conservative. Law, finance, government, academia.
   { key: 'classic-ink', name: 'Classic Ink', category: 'classic', layout: 'classic',
@@ -146,7 +119,6 @@ const SEED = [
     accent: ACCENTS.slate, fontPair: 'sans-modern', density: 'airy', atsSafe: false, sortOrder: 5 },
 ] satisfies Array<Preset & { sortOrder: number }>;
 
-/** Exposed so an admin UI can offer the same choices the renderer understands. */
 export const PARAMETER_SPACE = {
   layouts: Object.entries(LAYOUTS).map(([key, l]) => ({ key, name: l.name })),
   fontPairs: Object.entries(FONT_PAIRS).map(([key, f]) => ({ key, name: f.name })),

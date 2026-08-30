@@ -9,15 +9,6 @@ import { requireAuth, type AuthedRequest } from '../middleware/auth.middleware';
 
 export const interviewRouter = Router();
 
-/**
- * Interview timelines, keyed by (profile, job).
- *
- * Open to every signed-in role, like `applicationRouter`: the service scopes
- * each call to profiles the caller may use, and bidders are who actually sit
- * the interviews.
- */
-
-/** Map an InterviewError onto its status; anything else is a real 500. */
 function failure(err: unknown, res: Response, next: NextFunction): void {
   if (err instanceof InterviewError) {
     res.status(err.status).json({ error: err.message });
@@ -28,14 +19,6 @@ function failure(err: unknown, res: Response, next: NextFunction): void {
 
 const idParam = z.coerce.number().int().positive();
 
-/**
- * A real IANA zone name.
- *
- * Checked here rather than trusted, because the value is fed straight to
- * `Intl.DateTimeFormat({ timeZone })` in the browser, which THROWS on an
- * unknown zone. An unvalidated string would therefore not render a wrong time —
- * it would crash the card that displays it.
- */
 const timezone = z
   .string()
   .trim()
@@ -52,56 +35,23 @@ const timezone = z
     { message: 'Unknown time zone' },
   );
 
-/**
- * An http(s) URL, and nothing else.
- *
- * The panel card renders this as an `href`. Without the protocol check a
- * `javascript:` value stored here would execute in the reader's session on
- * click — and on a SHARED profile the reader is a colleague, not the person who
- * typed it. `z.string().url()` alone accepts `javascript:` quite happily.
- */
 const meetingUrl = z
   .string()
   .trim()
   .max(2048)
   .refine((v) => /^https?:\/\//i.test(v), { message: 'Link must start with http:// or https://' });
 
-/**
- * Note length cap, in CHARACTERS — 16,000, roughly six pages.
- *
- * The column is MySQL `TEXT`, which is capped at 65,535 BYTES, not characters,
- * and the table is utf8mb4 where one character costs up to four bytes. So the
- * safe character limit is 65535/4 ≈ 16,383, not the 65,535 the column length
- * suggests.
- *
- * This previously read 20_000. That is fine for ASCII and fails only once a
- * long note contains enough non-Latin text or emoji to push past 65,535 bytes,
- * at which point MySQL in strict mode rejects the write and the user loses the
- * note they just typed. Capping below the byte ceiling makes the limit hold for
- * any content rather than for English only.
- *
- * `frontend/app/components/interview-panel-modal.tsx` hard-stops the textarea
- * at the same number — keep the two in step.
- */
 const NOTE_MAX_CHARS = 16_000;
 
 const panelBody = z.object({
   title: z.string().trim().max(255).nullable().optional(),
   note: z.string().max(NOTE_MAX_CHARS).nullable().optional(),
   meetingUrl: meetingUrl.nullable().optional(),
-  /** ISO-8601 with an offset; the service stores the instant as UTC. */
   scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
   timezone: timezone.nullable().optional(),
   durationMin: z.number().int().min(0).max(1440).nullable().optional(),
 });
 
-/**
- * Copy only the keys the caller actually sent.
- *
- * Absent means "leave alone" and null means "clear", and every panel field is
- * optional — so collapsing the two would make it impossible to edit one field
- * without wiping the rest.
- */
 function toPanelInput(b: z.infer<typeof panelBody>): PanelInput {
   const out: PanelInput = {};
   if (b.title !== undefined) out.title = b.title;
@@ -115,9 +65,6 @@ function toPanelInput(b: z.infer<typeof panelBody>): PanelInput {
   return out;
 }
 
-/* ─── the process ──────────────────────────────────────────────────────── */
-
-/** POST /api/interviews — open a timeline for an applied job. Idempotent. */
 interviewRouter.post('/', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = z
@@ -131,7 +78,6 @@ interviewRouter.post('/', requireAuth, async (req: AuthedRequest, res: Response,
   }
 });
 
-/** GET /api/interviews?profileId= — every timeline the caller can reach. */
 interviewRouter.get('/', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = z.object({ profileId: idParam.optional() }).safeParse(req.query);
@@ -142,12 +88,6 @@ interviewRouter.get('/', requireAuth, async (req: AuthedRequest, res: Response, 
   }
 });
 
-/**
- * GET /api/interviews/upcoming?days= — the cross-process agenda.
- *
- * Registered before `/:id`, or Express matches "upcoming" as an id. Same for
- * the two below.
- */
 interviewRouter.get('/upcoming', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = z
@@ -160,12 +100,6 @@ interviewRouter.get('/upcoming', requireAuth, async (req: AuthedRequest, res: Re
   }
 });
 
-/**
- * GET /api/interviews/status?profileId=&jobIds=1,2,3 — keyed by job id.
- *
- * Bounded at 100 to match the `pageSize` ceiling on GET /api/jobs; without a
- * cap this is an unbounded `IN (...)` driven from the query string.
- */
 interviewRouter.get('/status', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = z
@@ -187,15 +121,6 @@ interviewRouter.get('/status', requireAuth, async (req: AuthedRequest, res: Resp
   }
 });
 
-/**
- * GET /api/interviews/calendar?from=&to=&profileId= — sittings in a range.
- *
- * The window is capped at 400 days. The calendar asks for one month at a time
- * plus the days either side of the grid, so anything near the cap is either a
- * mistake or someone driving the endpoint by hand — and without a bound this is
- * a full table scan of every panel the caller can reach, driven from a query
- * string. Registered before `/:id`, like the three above.
- */
 interviewRouter.get('/calendar', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = z
@@ -220,7 +145,6 @@ interviewRouter.get('/calendar', requireAuth, async (req: AuthedRequest, res: Re
   }
 });
 
-/** GET /api/interviews/for-job?jobId=&profileId= — the timeline, or null. */
 interviewRouter.get('/for-job', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = z.object({ jobId: idParam, profileId: idParam }).safeParse(req.query);
@@ -232,16 +156,12 @@ interviewRouter.get('/for-job', requireAuth, async (req: AuthedRequest, res: Res
   }
 });
 
-/* ─── steps and panels ─────────────────────────────────────────────────── */
-/* Two-segment paths, so they cannot collide with `/:id` above.            */
-
 const stepBody = z.object({
   position: z.number().int().min(0).optional(),
   title: z.string().trim().max(255).nullable().optional(),
   stageTypeIds: z.array(z.number().int().positive()).max(8).optional(),
 });
 
-/** POST /api/interviews/:id/steps — insert a step at `position`. */
 interviewRouter.post('/:id/steps', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const id = idParam.safeParse(req.params.id);
@@ -253,7 +173,6 @@ interviewRouter.post('/:id/steps', requireAuth, async (req: AuthedRequest, res: 
   }
 });
 
-/** PATCH /api/interviews/steps/:stepId — title, result and/or badge set. */
 interviewRouter.patch('/steps/:stepId', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const stepId = idParam.safeParse(req.params.stepId);
@@ -268,7 +187,6 @@ interviewRouter.patch('/steps/:stepId', requireAuth, async (req: AuthedRequest, 
   }
 });
 
-/** DELETE /api/interviews/steps/:stepId — removes its panels with it. */
 interviewRouter.delete('/steps/:stepId', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const stepId = idParam.safeParse(req.params.stepId);
@@ -279,7 +197,6 @@ interviewRouter.delete('/steps/:stepId', requireAuth, async (req: AuthedRequest,
   }
 });
 
-/** POST /api/interviews/steps/:stepId/panels — insert a panel at `position`. */
 interviewRouter.post('/steps/:stepId/panels', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const stepId = idParam.safeParse(req.params.stepId);
@@ -302,7 +219,6 @@ interviewRouter.post('/steps/:stepId/panels', requireAuth, async (req: AuthedReq
   }
 });
 
-/** PATCH /api/interviews/panels/:panelId — absent key = leave, null = clear. */
 interviewRouter.patch('/panels/:panelId', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const panelId = idParam.safeParse(req.params.panelId);
@@ -316,7 +232,6 @@ interviewRouter.patch('/panels/:panelId', requireAuth, async (req: AuthedRequest
   }
 });
 
-/** DELETE /api/interviews/panels/:panelId */
 interviewRouter.delete('/panels/:panelId', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const panelId = idParam.safeParse(req.params.panelId);
@@ -327,9 +242,6 @@ interviewRouter.delete('/panels/:panelId', requireAuth, async (req: AuthedReques
   }
 });
 
-/* ─── single timeline (registered last: `/:id` is the greediest) ────────── */
-
-/** GET /api/interviews/:id */
 interviewRouter.get('/:id', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const id = idParam.safeParse(req.params.id);
@@ -340,7 +252,6 @@ interviewRouter.get('/:id', requireAuth, async (req: AuthedRequest, res: Respons
   }
 });
 
-/** PATCH /api/interviews/:id — move the process to a new status. */
 interviewRouter.patch('/:id', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const id = idParam.safeParse(req.params.id);
@@ -364,7 +275,6 @@ interviewRouter.patch('/:id', requireAuth, async (req: AuthedRequest, res: Respo
   }
 });
 
-/** DELETE /api/interviews/:id — the timeline and everything under it. */
 interviewRouter.delete('/:id', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const id = idParam.safeParse(req.params.id);
@@ -376,13 +286,6 @@ interviewRouter.delete('/:id', requireAuth, async (req: AuthedRequest, res: Resp
   }
 });
 
-/**
- * The first validation message, so a rejected link or time zone says WHY.
- *
- * Worth the few lines only for the fields a user can get wrong in a way they
- * can act on: "Link must start with http://" is fixable, "Invalid request" is
- * a guessing game.
- */
 function firstIssue(parsed: z.SafeParseReturnType<unknown, unknown>): string | null {
   if (parsed.success) return null;
   const issue = parsed.error.issues[0];

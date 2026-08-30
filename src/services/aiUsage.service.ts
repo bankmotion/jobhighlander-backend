@@ -2,17 +2,8 @@ import { prisma } from '../lib/prisma';
 import { priceUsage, rateCard, type TokenUsage } from '../lib/pricing';
 import { logger } from './logger.service';
 
-/** Which generator spent the money. */
-/**
- * Which generator spent the money.
- *
- * `application` is what the current code writes: one call produces both
- * documents. `resume` and `cover_letter` remain because historical rows carry
- * them and a spend log must keep reading its own history.
- */
 export type AiFeature = 'application' | 'job_query' | 'resume' | 'cover_letter';
 
-/** Human labels, so the dashboard never has to translate a database value. */
 const FEATURE_LABELS: Record<AiFeature, string> = {
   application: 'Resume + cover letter',
   job_query: 'Ask AI about a job',
@@ -31,7 +22,6 @@ export interface RecordInput {
   usage: TokenUsage | null | undefined;
 }
 
-/** Token counts for one bucket, accumulated in micro-dollars. */
 interface Accumulator {
   calls: number;
   inputTokens: number;
@@ -41,15 +31,9 @@ interface Accumulator {
   costMicroUsd: number;
 }
 
-/** One bucket of the summary: a day, a model, a feature, a person, a profile. */
 export interface UsageBucket {
   key: string;
   label: string;
-  /**
-   * Second line of context for the label — a profile's owner, a user's role.
-   * Optional because the day, model and generator buckets have nothing to add,
-   * and an empty string there renders as a blank line in the table.
-   */
   sub?: string;
   calls: number;
   inputTokens: number;
@@ -62,58 +46,32 @@ export interface UsageBucket {
 export type UsageTotals = Omit<UsageBucket, 'key' | 'label' | 'sub'>;
 
 export interface UsageSummary {
-  /** Inclusive UTC dates (YYYY-MM-DD) actually covered. */
   from: string;
   to: string;
   days: number;
   totals: UsageTotals;
-  /** One entry per day in range, zero-filled: a quiet day is a real fact. */
   daily: UsageBucket[];
   byModel: UsageBucket[];
   byFeature: UsageBucket[];
-  /**
-   * Calls whose model had no compiled-in rate, so their cost counted as $0.
-   * Non-zero means every total here understates the real bill.
-   */
   unpricedCalls: number;
-  /** The rate table the figures came from, so the UI never hardcodes a price. */
   rates: ReturnType<typeof rateCard>;
 }
 
-/** One entry of a filter picker: something the summary can be narrowed to. */
 export interface FilterOption {
   id: number;
   label: string;
   sub?: string;
 }
 
-/**
- * Everything in `UsageSummary`, plus the two breakdowns that only mean anything
- * once more than one person's rows are in scope.
- */
 export interface AdminUsageSummary extends UsageSummary {
   byUser: UsageBucket[];
   byProfile: UsageBucket[];
-  /**
-   * The filter these figures were computed under, echoed back so the page can
-   * describe what it is showing from the response rather than from its own
-   * state — the two drift the moment a request fails.
-   */
   scope: { userId: number | null; profileId: number | null };
-  /**
-   * Every user and profile that spent anything in the window.
-   *
-   * Deliberately computed WITHOUT the active filter: derived from the filtered
-   * rows, choosing a user would leave a menu holding only that user and no way
-   * back to anyone else.
-   */
   filters: { users: FilterOption[]; profiles: FilterOption[] };
 }
 
-/** One logged call, as the drill-down table lists it. */
 export interface UsageCall {
   id: number;
-  /** ISO-8601 UTC. Formatted in the browser, where the reader's zone is known. */
   at: string;
   feature: string;
   featureLabel: string;
@@ -134,16 +92,13 @@ export interface UsageCall {
 
 export interface UsageCallPage {
   rows: UsageCall[];
-  /** Matching rows across the whole window, not just this page. */
   total: number;
   limit: number;
   offset: number;
 }
 
-/** Longest window any query here will scan in one request. */
 export const MAX_RANGE_DAYS = 365;
 
-/** Page size cap for the call log. */
 export const MAX_PAGE_SIZE = 200;
 
 const utcDay = (d: Date): string => d.toISOString().slice(0, 10);
@@ -157,7 +112,6 @@ const emptyAcc = (): Accumulator => ({
   costMicroUsd: 0,
 });
 
-/** Whole UTC days, so "last 30 days" always means 30 complete buckets. */
 function usageWindow(days: number): { span: number; start: Date; end: Date } {
   const span = Math.min(Math.max(Math.trunc(days) || 1, 1), MAX_RANGE_DAYS);
   const end = new Date();
@@ -166,12 +120,6 @@ function usageWindow(days: number): { span: number; start: Date; end: Date } {
   return { span, start, end };
 }
 
-/**
- * How an admin view may be narrowed.
- *
- * A FILTER, not a permission. Everything is already in scope by the time these
- * are applied — the role check happens at the route.
- */
 export interface UsageFilter {
   userId?: number | null;
   profileId?: number | null;
@@ -183,7 +131,6 @@ const filterWhere = (start: Date, filter: UsageFilter) => ({
   ...(filter.profileId != null ? { profileId: filter.profileId } : {}),
 });
 
-/** The columns every aggregation below reads. */
 const ROW_SELECT = {
   feature: true,
   model: true,
@@ -214,7 +161,6 @@ interface UsageRow {
   createdAt: Date;
 }
 
-/** A display name, with optional context underneath it. */
 interface Named {
   label: string;
   sub?: string;
@@ -227,15 +173,6 @@ const profileName = (p: {
   email: string | null;
 }): string => [p.firstName, p.lastName].filter(Boolean).join(' ') || p.email || `Profile #${p.id}`;
 
-/**
- * Display names for the users and profiles a set of rows touches.
- *
- * Every lookup here has to cope with a miss, because spend rows outlive what
- * they point at by design: deleting a user nulls `userId`, and `profileId`
- * carries no foreign key at all. A miss becomes "#id (deleted)" rather than a
- * dropped row — the money was still spent, and hiding it would leave the
- * breakdowns disagreeing with the total printed above them.
- */
 async function nameLookups(
   userIds: number[],
   profileIds: number[],
@@ -270,15 +207,6 @@ async function nameLookups(
 }
 
 export const aiUsageService = {
-  /**
-   * Log one completed Anthropic call.
-   *
-   * NEVER THROWS. This runs after a generation the user already waited a minute
-   * for, and before the document reaches them. Letting an accounting insert
-   * fail the request would trade a real deliverable for a bookkeeping row. A
-   * failure is logged loudly instead, because a silently missing row understates
-   * the bill.
-   */
   async record({ feature, model, userId, profileId, jobId, usage }: RecordInput): Promise<void> {
     try {
       const priced = priceUsage(model, usage);
@@ -324,22 +252,6 @@ export const aiUsageService = {
     }
   },
 
-  /**
-   * One user's spend over the last `days` days, split by day, model and
-   * generator.
-   *
-   * `userId` is REQUIRED and lands in the WHERE clause: this is the view every
-   * signed-in role can reach, so another user's rows must never be read into
-   * the process at all. The unscoped view is a DIFFERENT METHOD — `adminSummary`
-   * below, behind its own super-admin-only route. Widening happens by calling
-   * something else, never by passing a different argument to this.
-   *
-   * One findMany over the window, bucketed here, rather than three grouped
-   * queries plus raw SQL for the daily series. A user's window holds one row per
-   * generation (hundreds at the outside), so a single scan beats three round
-   * trips, and bucketing in JS keeps days in UTC instead of at the mercy of the
-   * database session timezone.
-   */
   async summary(days: number, userId: number): Promise<UsageSummary> {
     const { span, start, end } = usageWindow(days);
 
@@ -352,19 +264,6 @@ export const aiUsageService = {
     return aggregate(rows, start, end, span);
   },
 
-  /**
-   * EVERY user's spend, across every profile, with per-user and per-profile
-   * breakdowns on top of the usual day/model/generator ones.
-   *
-   * SUPER ADMIN ONLY. This method takes no caller identity and therefore checks
-   * nothing itself — the route that reaches it carries `requireRole`, and a new
-   * call site without one is a leak of the whole table. There is exactly one.
-   *
-   * Same single-scan shape as `summary`: this instance serves a handful of
-   * people generating one row per application, so a year's window is thousands
-   * of rows, not millions. If that stops being true, the daily series is the
-   * part to push into SQL first.
-   */
   async adminSummary(days: number, filter: UsageFilter = {}): Promise<AdminUsageSummary> {
     const { span, start, end } = usageWindow(days);
 
@@ -448,16 +347,6 @@ export const aiUsageService = {
     };
   },
 
-  /**
-   * The individual calls behind the figures, newest first.
-   *
-   * SUPER ADMIN ONLY, on the same terms as `adminSummary` — no identity in,
-   * no check here, one call site that holds the role check.
-   *
-   * This is the level a total has to be traceable to. A month's figure nobody
-   * can decompose into who spent it, on which candidate, against which job and
-   * on which model is not an audit trail, it is just a number.
-   */
   async calls(days: number, filter: UsageFilter = {}, limit = 50, offset = 0): Promise<UsageCallPage> {
     const { start } = usageWindow(days);
     const take = Math.min(Math.max(Math.trunc(limit) || 1, 1), MAX_PAGE_SIZE);
@@ -524,7 +413,6 @@ export const aiUsageService = {
 
 type BucketMap = Map<string, { label: string; sub?: string; acc: Accumulator }>;
 
-/** Fold one row into an accumulator. */
 function add(acc: Accumulator, r: UsageRow): void {
   acc.calls += 1;
   acc.inputTokens += r.inputTokens;
@@ -534,7 +422,6 @@ function add(acc: Accumulator, r: UsageRow): void {
   acc.costMicroUsd += r.costMicroUsd;
 }
 
-/** Get (or create) a bucket. The first label seen for a key wins. */
 function upsert(map: BucketMap, key: string, named: Named): Accumulator {
   let entry = map.get(key);
   if (!entry) {
@@ -558,15 +445,6 @@ const collect = (map: BucketMap): UsageBucket[] =>
 const byCostDesc = (a: UsageBucket, b: UsageBucket): number =>
   b.costUsd - a.costUsd || b.calls - a.calls;
 
-/**
- * The day / model / generator breakdowns every summary carries, whoever is
- * asking.
- *
- * Shared by the self view and the admin view so the two can never drift into
- * computing the same total two different ways — a per-user page and an
- * all-users page that disagree about one person's month is the failure this
- * exists to prevent.
- */
 function aggregate(rows: UsageRow[], start: Date, end: Date, span: number): UsageSummary {
   const day: BucketMap = new Map();
   const model: BucketMap = new Map();

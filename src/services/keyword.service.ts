@@ -1,6 +1,5 @@
 import { prisma } from '../lib/prisma';
 
-/** Emphasis keywords. Uniqueness is case-insensitive (DB collation). */
 export const keywordService = {
   list() {
     return prisma.keyword.findMany({ orderBy: { word: 'asc' } });

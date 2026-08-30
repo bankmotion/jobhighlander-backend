@@ -8,7 +8,6 @@ export const keywordRouter = Router();
 const wordSchema = z.object({ word: z.string().trim().min(1).max(128) });
 const requireSuperAdmin = [requireAuth, requireRole('super_admin')];
 
-/** GET /api/keywords — any signed-in user (needed to highlight descriptions). */
 keywordRouter.get('/', requireAuth, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await keywordService.list());
@@ -17,7 +16,6 @@ keywordRouter.get('/', requireAuth, async (_req: Request, res: Response, next: N
   }
 });
 
-/** POST /api/keywords — add a word (admin). */
 keywordRouter.post('/', requireSuperAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = wordSchema.safeParse(req.body);
@@ -30,7 +28,6 @@ keywordRouter.post('/', requireSuperAdmin, async (req: Request, res: Response, n
   }
 });
 
-/** PUT /api/keywords/:id — rename a word (admin). */
 keywordRouter.put('/:id', requireSuperAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = Number(req.params.id);
@@ -44,7 +41,6 @@ keywordRouter.put('/:id', requireSuperAdmin, async (req: Request, res: Response,
   }
 });
 
-/** DELETE /api/keywords/:id — remove a word (admin). */
 keywordRouter.delete('/:id', requireSuperAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = Number(req.params.id);

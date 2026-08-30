@@ -2,23 +2,6 @@ import { prisma } from '../lib/prisma';
 import { logger } from '../services/logger.service';
 import type { Role } from '../services/auth.service';
 
-/**
- * Demo profiles and invitations for exercising the sharing flow.
- *
- *   npx tsx src/scripts/seed-demo.ts            seed (replaces any previous run)
- *   npx tsx src/scripts/seed-demo.ts --clear    remove them again
- *
- * Every profile it creates carries an email under DEMO_DOMAIN, which is the
- * only thing marking a row as demo data. That is what makes the script both
- * re-runnable and reversible WITHOUT a schema column: seeding deletes the
- * previous batch by that suffix first, so it never accumulates duplicates, and
- * it can never touch a profile a human typed in.
- *
- * Invitations are seeded across all three states on purpose. `pending` and
- * `declined` are the two the UI is easiest to get wrong and the hardest to
- * reach by hand — reaching `declined` otherwise means inviting yourself from a
- * second account and refusing.
- */
 const DEMO_DOMAIN = '@demo.local';
 
 interface WorkSeed {
@@ -35,7 +18,6 @@ interface EduSeed {
   endDate: string | null;
 }
 interface InviteSeed {
-  /** Who to invite, by role — resolved to a real user at run time. */
   role: Role;
   status: 'pending' | 'accepted' | 'declined';
 }
@@ -52,11 +34,6 @@ interface ProfileSeed {
 
 const d = (s: string) => new Date(`${s}-01T00:00:00Z`);
 
-/**
- * Spread across two owners so "Shared with you" is populated in BOTH
- * directions — an admin who owns profiles is also an invitee on someone
- * else's, which is the case a single-owner fixture never produces.
- */
 const SEED: ProfileSeed[] = [
   {
     ownerRole: 'admin',
@@ -189,7 +166,6 @@ const SEED: ProfileSeed[] = [
 const emailFor = (p: ProfileSeed) =>
   `${p.firstName}.${p.lastName}`.toLowerCase() + DEMO_DOMAIN;
 
-/** Delete every demo profile. Invitations go with them by cascade. */
 async function clear(): Promise<number> {
   const { count } = await prisma.profile.deleteMany({
     where: { email: { endsWith: DEMO_DOMAIN } },

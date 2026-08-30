@@ -2,16 +2,6 @@ import type { TemplateProps } from './types';
 import { Rich } from '../rich';
 import { groupSkills } from '../skills';
 
-/**
- * Modern — single column, sans-serif, an accent rule under the name and accent
- * section labels. Aimed at tech and startup postings, which is most of the
- * scraped corpus.
- *
- * Still ATS-safe: the differences from Classic are typographic and chromatic,
- * not structural. There is one column, no tables, no icons standing in for
- * labels, and no letter-spacing anywhere — the constraints are what make a
- * layout parseable, and they cost nothing visually.
- */
 export function ModernLayout({ resume, name, contact }: TemplateProps) {
   return (
     <div className="page">

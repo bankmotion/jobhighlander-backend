@@ -1,26 +1,6 @@
 import { prisma } from '../lib/prisma';
 import { usableProfileWhere } from './profile.service';
 
-/**
- * Bid performance — what happened to the applications this user's profiles made.
- *
- * "Bid" is this product's word for an application, so the questions are: how many
- * went out, how many came back, and from which sources.
- *
- * THESE ARE THE CALLER'S OWN BIDS. A shared profile is worked by several people
- * and `markedById` records who actually sent each one, so the numbers here are
- * filtered to that rather than to the profile. Scoping by profile alone would
- * credit a bidder with a colleague's applications and make an individual
- * interview rate meaningless — the profile filter stays on top of it as the
- * access rule, not as the definition of "mine".
- *
- * The funnel is derived from JOINED state, not from separate counts: an
- * interview only counts as a conversion when it belongs to an application that
- * is itself inside the window. Counting interviews independently would let the
- * rate exceed 100% whenever an older application progressed this month, which
- * is the classic way a funnel chart ends up lying.
- */
-
 export type FunnelStage = 'applied' | 'interviewing' | 'offer' | 'accepted';
 
 export interface BidPerformance {
@@ -33,30 +13,16 @@ export interface BidPerformance {
     rejected: number;
     discarded: number;
     companies: number;
-    /** Interviews still live — not a subset of the window, this is "right now". */
     activeInterviews: number;
   };
   rates: { interview: number; offer: number; accepted: number };
-  /** One row per day across the whole window, zero-filled so gaps read as gaps. */
   daily: { date: string; applications: number; interviews: number }[];
   funnel: { stage: FunnelStage; label: string; count: number }[];
   bySite: { site: string; applications: number; interviews: number; rate: number }[];
   byCompany: { company: string; applications: number; interviews: number }[];
   byProfile: { profileId: number; name: string; applications: number; interviews: number; offers: number }[];
   outcomes: { status: string; label: string; count: number }[];
-  /**
-   * Per-bidder totals. Empty in the personal view — there every row would be
-   * the caller — and populated only for the cross-user (admin) scope.
-   */
   byUser: { userId: number; email: string; applications: number; interviews: number; offers: number }[];
-  /**
-   * Everyone who has EVER bid on the in-scope profiles — the option list for the
-   * bidder filter.
-   *
-   * Deliberately not derived from `byUser`: that is filtered by the window AND
-   * by the selected bidder, so building the dropdown from it would collapse to a
-   * single option the moment you used it, with no way back.
-   */
   bidders: { userId: number; email: string }[];
 }
 
@@ -70,7 +36,6 @@ const OUTCOME_LABELS: Record<string, string> = {
   on_hold: 'On hold',
 };
 
-/** Statuses that mean the employer said yes at least once. */
 const OFFER_STATUSES = new Set(['offer', 'accepted']);
 
 const dayKey = (d: Date): string => d.toISOString().slice(0, 10);
@@ -83,20 +48,7 @@ export const statsService = {
     window: { from: Date; to: Date },
     opts: {
       profileId?: number;
-      /**
-       * Include every bidder's applications, not just the caller's.
-       *
-       * This drops the `markedById` filter ONLY. The usable-profile filter
-       * always stays on: an admin runs a team on the profiles they own or were
-       * invited to, and widening to every profile in the database would hand
-       * them other admins' pipelines. "All bidders on my profiles" is the
-       * question; "all profiles" is not.
-       */
       allUsers?: boolean;
-      /**
-       * Narrow to a single bidder. Only meaningful with `allUsers`; in the
-       * personal scope the caller is already the only bidder in the data.
-       */
       userId?: number;
     } = {},
   ): Promise<BidPerformance> {
@@ -325,7 +277,6 @@ export const statsService = {
   },
 };
 
-/** Distinct users by id, ordered by email so the dropdown is stable. */
 function dedupeUsers(
   rows: { id: number; email: string }[],
 ): { userId: number; email: string }[] {
