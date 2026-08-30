@@ -1,7 +1,7 @@
 import { Router, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { statsService } from '../services/stats.service';
-import { requireAuth, type AuthedRequest } from '../middleware/auth.middleware';
+import { requireAuth, requireRole, type AuthedRequest } from '../middleware/auth.middleware';
 
 export const statsRouter = Router();
 
@@ -58,8 +58,47 @@ statsRouter.get('/bid-performance', requireAuth, async (req: AuthedRequest, res:
     if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
     const window = resolveWindow(parsed.data);
     if ('error' in window) return res.status(400).json({ error: window.error });
-    res.json(await statsService.bidPerformance(req.user!.id, window, parsed.data.profileId));
+    res.json(await statsService.bidPerformance(req.user!.id, window, { profileId: parsed.data.profileId }));
   } catch (err) {
     next(err);
   }
 });
+
+/**
+ * GET /api/stats/bid-performance/all — every user's bids, every profile.
+ *
+ * Admin and super admin. Unlike the AI-usage equivalent this is NOT super-admin
+ * only: an admin runs a team of bidders and needs to see how that team is doing.
+ * It stays bounded by profile access, so an admin sees every bidder working the
+ * profiles they own or share — not every profile in the database.
+ *
+ * Gated here rather than in the service: the service takes `allUsers` as an
+ * instruction, so this route is what stands between "show me the team" and
+ * anyone who asks for it. Same shape as the personal endpoint plus `byUser`,
+ * so one dashboard renders both.
+ *
+ * A sibling route rather than a flag on the personal one: "what did I send" and
+ * "what is the team sending" are different questions with different audiences,
+ * and a flag that silently widens scope is the kind of thing that leaks.
+ */
+statsRouter.get(
+  '/bid-performance/all',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const parsed = query.safeParse(req.query);
+      if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
+      const window = resolveWindow(parsed.data);
+      if ('error' in window) return res.status(400).json({ error: window.error });
+      res.json(
+        await statsService.bidPerformance(req.user!.id, window, {
+          profileId: parsed.data.profileId,
+          allUsers: true,
+        }),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
+);

@@ -44,6 +44,11 @@ export interface BidPerformance {
   byCompany: { company: string; applications: number; interviews: number }[];
   byProfile: { profileId: number; name: string; applications: number; interviews: number; offers: number }[];
   outcomes: { status: string; label: string; count: number }[];
+  /**
+   * Per-bidder totals. Empty in the personal view — there every row would be
+   * the caller — and populated only for the cross-user (admin) scope.
+   */
+  byUser: { userId: number; email: string; applications: number; interviews: number; offers: number }[];
 }
 
 const OUTCOME_LABELS: Record<string, string> = {
@@ -67,11 +72,26 @@ export const statsService = {
   async bidPerformance(
     userId: number,
     window: { from: Date; to: Date },
-    profileId?: number,
+    opts: {
+      profileId?: number;
+      /**
+       * Include every bidder's applications, not just the caller's.
+       *
+       * This drops the `markedById` filter ONLY. The usable-profile filter
+       * always stays on: an admin runs a team on the profiles they own or were
+       * invited to, and widening to every profile in the database would hand
+       * them other admins' pipelines. "All bidders on my profiles" is the
+       * question; "all profiles" is not.
+       */
+      allUsers?: boolean;
+    } = {},
   ): Promise<BidPerformance> {
+    const { profileId, allUsers = false } = opts;
     const { from, to } = window;
     // Inclusive day count, so a same-day range is one bucket rather than none.
     const days = Math.max(0, Math.round((to.getTime() - from.getTime()) / 86400000));
+    // Profile access is the same rule in both scopes — `allUsers` widens WHO
+    // is counted, never WHICH profiles are visible.
     const scope = usableProfileWhere(userId);
     const profileFilter = profileId ? { id: profileId, ...scope } : scope;
 
@@ -98,17 +118,21 @@ export const statsService = {
       prisma.jobApplication.findMany({
         where: {
           profileId: { in: profileIds },
-          markedById: userId,
+          ...(allUsers ? {} : { markedById: userId }),
           appliedAt: { gte: from, lte: to },
         },
-        select: { profileId: true, jobId: true, jobCompany: true, appliedAt: true },
+        select: {
+          profileId: true, jobId: true, jobCompany: true, appliedAt: true,
+          markedById: true,
+          markedBy: { select: { email: true } },
+        },
       }),
       // Every bid this user ever made, ids only. Outcomes and the live count are
       // deliberately NOT windowed — an interview opened from a bid sent two
       // months ago is still this user's interview — so the join needs the whole
       // history, not just the window above.
       prisma.jobApplication.findMany({
-        where: { profileId: { in: profileIds }, markedById: userId },
+        where: { profileId: { in: profileIds }, ...(allUsers ? {} : { markedById: userId }) },
         select: { profileId: true, jobId: true },
       }),
       prisma.interview.findMany({
@@ -118,7 +142,7 @@ export const statsService = {
       prisma.jobDiscard.count({
         where: {
           profileId: { in: profileIds },
-          discardedById: userId,
+          ...(allUsers ? {} : { discardedById: userId }),
           discardedAt: { gte: from, lte: to },
         },
       }),
@@ -156,6 +180,7 @@ export const statsService = {
     const bySite = new Map<string, { applications: number; interviews: number }>();
     const byCompany = new Map<string, { company: string; applications: number; interviews: number }>();
     const byProfile = new Map<number, { applications: number; interviews: number; offers: number }>();
+    const byUser = new Map<number, { email: string; applications: number; interviews: number; offers: number }>();
 
     for (let i = 0; i <= days; i++) {
       const at = new Date(from.getTime() + i * 86400000);
@@ -193,6 +218,15 @@ export const statsService = {
       if (won) p.interviews++;
       if (iv && OFFER_STATUSES.has(iv.status)) p.offers++;
       byProfile.set(a.profileId, p);
+
+      const u = byUser.get(a.markedById) ?? {
+        email: a.markedBy?.email ?? `User ${a.markedById}`,
+        applications: 0, interviews: 0, offers: 0,
+      };
+      u.applications++;
+      if (won) u.interviews++;
+      if (iv && OFFER_STATUSES.has(iv.status)) u.offers++;
+      byUser.set(a.markedById, u);
     }
 
     const outcomeCounts = new Map<string, number>();
@@ -239,6 +273,13 @@ export const statsService = {
       outcomes: [...outcomeCounts.entries()]
         .map(([status, count]) => ({ status, label: OUTCOME_LABELS[status] ?? status, count }))
         .sort((a, b) => b.count - a.count),
+      // Only meaningful when several people's bids are in scope; in the personal
+      // view every row would be the caller, which is noise rather than a table.
+      byUser: allUsers
+        ? [...byUser.entries()]
+            .map(([id, v]) => ({ userId: id, ...v }))
+            .sort((a, b) => b.applications - a.applications)
+        : [],
     };
   },
 };
@@ -263,5 +304,6 @@ function emptyResult(days: number, from: Date, to: Date): BidPerformance {
     byCompany: [],
     byProfile: [],
     outcomes: [],
+    byUser: [],
   };
 }
