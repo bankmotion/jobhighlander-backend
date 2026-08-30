@@ -128,7 +128,7 @@ export const statsService = {
       return emptyResult(days, from, to);
     }
 
-    const [applications, myBidsEver, interviews, discarded, bidderRows] = await Promise.all([
+    const [applications, myBidsEver, interviews, discarded, memberRows] = await Promise.all([
       prisma.jobApplication.findMany({
         where: {
           profileId: { in: profileIds },
@@ -163,13 +163,25 @@ export const statsService = {
           discardedAt: { gte: from, lte: to },
         },
       }),
-      // Option list for the bidder filter: unwindowed and unfiltered by bidder,
-      // so selecting one does not erase the others from the dropdown.
+      // Option list for the bidder filter: everyone with ACCESS to the in-scope
+      // profiles, which is the owner plus accepted invitees — the same rule as
+      // `usableProfileWhere`.
+      //
+      // Membership, not activity. Deriving this from who has actually bid would
+      // hide the people who have bid NOTHING, and "this bidder has sent zero on
+      // this profile" is one of the more useful things an admin can learn here.
+      // It is also unwindowed and unfiltered by bidder, so selecting one does
+      // not erase the others from the dropdown.
       allUsers
-        ? prisma.jobApplication.findMany({
-            where: { profileId: { in: profileIds } },
-            distinct: ['markedById'],
-            select: { markedById: true, markedBy: { select: { email: true } } },
+        ? prisma.profile.findMany({
+            where: { id: { in: profileIds } },
+            select: {
+              owner: { select: { id: true, email: true } },
+              invitations: {
+                where: { status: 'accepted' },
+                select: { user: { select: { id: true, email: true } } },
+              },
+            },
           })
         : Promise.resolve([]),
     ]);
@@ -301,9 +313,9 @@ export const statsService = {
         .sort((a, b) => b.count - a.count),
       // Only meaningful when several people's bids are in scope; in the personal
       // view every row would be the caller, which is noise rather than a table.
-      bidders: bidderRows
-        .map((r) => ({ userId: r.markedById, email: r.markedBy?.email ?? `User ${r.markedById}` }))
-        .sort((a, b) => a.email.localeCompare(b.email)),
+      bidders: dedupeUsers(
+        memberRows.flatMap((p) => [p.owner, ...p.invitations.map((i) => i.user)]),
+      ),
       byUser: allUsers
         ? [...byUser.entries()]
             .map(([id, v]) => ({ userId: id, ...v }))
@@ -312,6 +324,17 @@ export const statsService = {
     };
   },
 };
+
+/** Distinct users by id, ordered by email so the dropdown is stable. */
+function dedupeUsers(
+  rows: { id: number; email: string }[],
+): { userId: number; email: string }[] {
+  const byId = new Map<number, string>();
+  for (const r of rows) if (r) byId.set(r.id, r.email);
+  return [...byId.entries()]
+    .map(([userId, email]) => ({ userId, email }))
+    .sort((a, b) => a.email.localeCompare(b.email));
+}
 
 function emptyResult(days: number, from: Date, to: Date): BidPerformance {
   const daily: BidPerformance['daily'] = [];
