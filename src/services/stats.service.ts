@@ -48,16 +48,27 @@ export const statsService = {
     window: { from: Date; to: Date },
     opts: {
       profileId?: number;
-      allUsers?: boolean;
-      userId?: number;
+      // Whose bids to count. Undefined = the caller's own, 'all' = every member
+      // of the in-scope profiles, a number = that one teammate. Access is still
+      // decided by profile membership, so this widens WHO is counted and never
+      // WHICH profiles are visible.
+      bidder?: number | 'all';
     } = {},
   ): Promise<BidPerformance> {
-    const { profileId, allUsers = false, userId: bidderId } = opts;
+    const { profileId, bidder } = opts;
+    const allUsers = bidder === 'all';
+    const bidderId = typeof bidder === 'number' ? bidder : undefined;
     const { from, to } = window;
     // Inclusive day count, so a same-day range is one bucket rather than none.
     const days = Math.max(0, Math.round((to.getTime() - from.getTime()) / 86400000));
     // Profile access is the same rule in both scopes — `allUsers` widens WHO
     // is counted, never WHICH profiles are visible.
+    // Undefined bidder means "me"; a named bidder narrows to them; 'all' drops
+    // the filter so every member's bids are counted.
+    const markedByFilter: { markedById?: number } = allUsers
+      ? {}
+      : { markedById: bidderId ?? userId };
+
     const scope = usableProfileWhere(userId);
     const profileFilter = profileId ? { id: profileId, ...scope } : scope;
 
@@ -84,7 +95,7 @@ export const statsService = {
       prisma.jobApplication.findMany({
         where: {
           profileId: { in: profileIds },
-          ...(allUsers ? (bidderId ? { markedById: bidderId } : {}) : { markedById: userId }),
+          ...markedByFilter,
           appliedAt: { gte: from, lte: to },
         },
         select: {
@@ -100,7 +111,7 @@ export const statsService = {
       prisma.jobApplication.findMany({
         where: {
           profileId: { in: profileIds },
-          ...(allUsers ? (bidderId ? { markedById: bidderId } : {}) : { markedById: userId }),
+          ...markedByFilter,
         },
         select: { profileId: true, jobId: true },
       }),
@@ -111,7 +122,7 @@ export const statsService = {
       prisma.jobDiscard.count({
         where: {
           profileId: { in: profileIds },
-          ...(allUsers ? (bidderId ? { discardedById: bidderId } : {}) : { discardedById: userId }),
+          ...(markedByFilter.markedById ? { discardedById: markedByFilter.markedById } : {}),
           discardedAt: { gte: from, lte: to },
         },
       }),
@@ -120,22 +131,20 @@ export const statsService = {
       // `usableProfileWhere`.
       //
       // Membership, not activity. Deriving this from who has actually bid would
-      // hide the people who have bid NOTHING, and "this bidder has sent zero on
-      // this profile" is one of the more useful things an admin can learn here.
-      // It is also unwindowed and unfiltered by bidder, so selecting one does
-      // not erase the others from the dropdown.
-      allUsers
-        ? prisma.profile.findMany({
-            where: { id: { in: profileIds } },
-            select: {
-              owner: { select: { id: true, email: true } },
-              invitations: {
-                where: { status: 'accepted' },
-                select: { user: { select: { id: true, email: true } } },
-              },
-            },
-          })
-        : Promise.resolve([]),
+      // hide the people who have bid NOTHING, and "this teammate has sent zero
+      // on this profile" is one of the more useful things to learn here. It is
+      // also unwindowed and unfiltered by bidder, so selecting one does not
+      // erase the others from the dropdown.
+      prisma.profile.findMany({
+        where: { id: { in: profileIds } },
+        select: {
+          owner: { select: { id: true, email: true } },
+          invitations: {
+            where: { status: 'accepted' },
+            select: { user: { select: { id: true, email: true } } },
+          },
+        },
+      }),
     ]);
 
     // Which (profile, job) pairs reached an interview. Keyed on the pair because
@@ -268,11 +277,13 @@ export const statsService = {
       bidders: dedupeUsers(
         memberRows.flatMap((p) => [p.owner, ...p.invitations.map((i) => i.user)]),
       ),
-      byUser: allUsers
-        ? [...byUser.entries()]
-            .map(([id, v]) => ({ userId: id, ...v }))
-            .sort((a, b) => b.applications - a.applications)
-        : [],
+      // Only worth a table when more than one person's bids are in view.
+      byUser:
+        allUsers && byUser.size > 1
+          ? [...byUser.entries()]
+              .map(([id, v]) => ({ userId: id, ...v }))
+              .sort((a, b) => b.applications - a.applications)
+          : [],
     };
   },
 };

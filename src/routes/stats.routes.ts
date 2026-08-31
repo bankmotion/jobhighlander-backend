@@ -1,7 +1,7 @@
 import { Router, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { statsService } from '../services/stats.service';
-import { requireAuth, requireRole, type AuthedRequest } from '../middleware/auth.middleware';
+import { requireAuth, type AuthedRequest } from '../middleware/auth.middleware';
 
 export const statsRouter = Router();
 
@@ -17,7 +17,9 @@ const query = z.object({
   from: isoDate.optional(),
   to: isoDate.optional(),
   profileId: z.coerce.number().int().positive().optional(),
-  userId: z.coerce.number().int().positive().optional(),
+  // Which bidder's stats to show. Absent = the caller's own, 'all' = everyone
+  // with access to the in-scope profiles, a number = that teammate.
+  bidder: z.union([z.literal('all'), z.coerce.number().int().positive()]).optional(),
 });
 
 function resolveWindow(q: z.infer<typeof query>): { from: Date; to: Date } | { error: string } {
@@ -42,31 +44,13 @@ statsRouter.get('/bid-performance', requireAuth, async (req: AuthedRequest, res:
     if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
     const window = resolveWindow(parsed.data);
     if ('error' in window) return res.status(400).json({ error: window.error });
-    res.json(await statsService.bidPerformance(req.user!.id, window, { profileId: parsed.data.profileId }));
+    res.json(
+      await statsService.bidPerformance(req.user!.id, window, {
+        profileId: parsed.data.profileId,
+        bidder: parsed.data.bidder,
+      }),
+    );
   } catch (err) {
     next(err);
   }
 });
-
-statsRouter.get(
-  '/bid-performance/all',
-  requireAuth,
-  requireRole('admin', 'super_admin'),
-  async (req: AuthedRequest, res: Response, next: NextFunction) => {
-    try {
-      const parsed = query.safeParse(req.query);
-      if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
-      const window = resolveWindow(parsed.data);
-      if ('error' in window) return res.status(400).json({ error: window.error });
-      res.json(
-        await statsService.bidPerformance(req.user!.id, window, {
-          profileId: parsed.data.profileId,
-          userId: parsed.data.userId,
-          allUsers: true,
-        }),
-      );
-    } catch (err) {
-      next(err);
-    }
-  },
-);
