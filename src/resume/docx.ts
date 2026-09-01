@@ -20,15 +20,15 @@ import { PAGE_PX, type PageSize, type Preset } from './templates/registry';
 import { resolveTokens, type ResolvedTokens } from './tokens';
 
 const TWIPS_PER_PX = 15; // 1440 / 96
-const px = (n: number) => Math.round(n * TWIPS_PER_PX);
-const halfPt = (n: number) => Math.round(n * 2);
+export const px = (n: number) => Math.round(n * TWIPS_PER_PX);
+export const halfPt = (n: number) => Math.round(n * 2);
 
-const PAGE_TWIPS: Record<PageSize, { width: number; height: number }> = {
+export const PAGE_TWIPS: Record<PageSize, { width: number; height: number }> = {
   letter: { width: px(PAGE_PX.letter.width), height: px(PAGE_PX.letter.height) },
   a4: { width: px(PAGE_PX.a4.width), height: px(PAGE_PX.a4.height) },
 };
 
-function wordFonts(tokens: ResolvedTokens): { display: string; body: string } {
+export function wordFonts(tokens: ResolvedTokens): { display: string; body: string } {
   const pick = (stack: string): string => {
     const first = stack.split(',')[0].replace(/["']/g, '').trim();
     if (/^Helvetica/i.test(first)) return 'Arial';
@@ -37,7 +37,7 @@ function wordFonts(tokens: ResolvedTokens): { display: string; body: string } {
   return { display: pick(tokens.fonts.display), body: pick(tokens.fonts.body) };
 }
 
-const hex = (c: string) => c.replace('#', '').toUpperCase();
+export const hex = (c: string) => c.replace('#', '').toUpperCase();
 
 export function richRuns(
   text: string,

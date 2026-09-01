@@ -7,6 +7,14 @@ import {
   coverLetterUpdateSchema,
 } from '../schemas/coverLetter.schema';
 import { requireAuth, type AuthedRequest } from '../middleware/auth.middleware';
+import { prisma } from '../lib/prisma';
+import { logger } from '../services/logger.service';
+import { presetService } from '../services/preset.service';
+import { profileIdentity } from '../services/resume.service';
+import { usableProfileWhere } from '../services/profile.service';
+import { renderCoverLetterHtml } from '../resume/letter';
+import { renderCoverLetterDocx } from '../resume/letter-docx';
+import { htmlToPdf } from '../resume/pdf';
 import { z } from 'zod';
 
 export const coverLetterRouter = Router();
@@ -90,3 +98,92 @@ coverLetterRouter.put('/', requireAuth, async (req: AuthedRequest, res: Response
     failure(err, res, next);
   }
 });
+
+// ── Downloads ────────────────────────────────────────────────────────────
+// The letter is rendered from the STORED body, not regenerated: it is a record
+// of what was written, including any hand edits, and re-running the model would
+// quietly hand the user a different letter than the one they reviewed.
+//
+// A 404 when no letter exists is deliberate and load-bearing: the job list
+// downloads the resume and the letter together, and asks for the letter
+// unconditionally rather than first checking whether there is one. A missing
+// letter has to be an ordinary "nothing here", not an error worth showing.
+const downloadQuery = z.object({
+  jobId: z.coerce.number().int().positive(),
+  profileId: z.coerce.number().int().positive(),
+  templateKey: z.string().trim().max(64).optional(),
+  pageSize: z.enum(['letter', 'a4']).default('letter'),
+});
+
+async function letterDownload(
+  req: AuthedRequest,
+  res: Response,
+  next: NextFunction,
+  format: 'pdf' | 'docx',
+): Promise<void> {
+  try {
+    const parsed = downloadQuery.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid request' });
+      return;
+    }
+    const { jobId, profileId, templateKey, pageSize } = parsed.data;
+    const userId = req.user!.id;
+
+    const letter = await coverLetterService.saved(jobId, profileId, userId);
+    if (!letter) {
+      res.status(404).json({ error: 'No cover letter for this job yet' });
+      return;
+    }
+
+    // Same profile scoping as the resume routes: a profile the caller may not
+    // use is a 404, so the endpoint never confirms the row exists.
+    const profile = await prisma.profile.findFirst({
+      where: { id: profileId, ...usableProfileWhere(userId) },
+      select: { firstName: true, lastName: true, email: true, phone: true, location: true, linkedin: true },
+    });
+    if (!profile) {
+      res.status(404).json({ error: 'Profile not found' });
+      return;
+    }
+    const { name, contact } = profileIdentity(profile);
+
+    // Falls back to the profile default so the letter matches the resume it is
+    // sent with, rather than always using the built-in preset.
+    const preset = templateKey
+      ? await presetService.get(templateKey)
+      : await presetService.forProfile(profileId, userId);
+
+    const file = `cover_${(name || 'letter').replace(/[^\w.-]+/g, '_').slice(0, 60) || 'letter'}`;
+
+    if (format === 'docx') {
+      const docx = await renderCoverLetterDocx({ body: letter.body, name, contact, preset, pageSize });
+      logger.info('Cover letter DOCX rendered', { bytes: docx.length, jobId, templateKey });
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      );
+      res.setHeader('Content-Disposition', `attachment; filename="${file}.docx"`);
+      res.setHeader('Content-Length', String(docx.length));
+      res.end(docx);
+      return;
+    }
+
+    const html = renderCoverLetterHtml({ body: letter.body, name, contact, preset, pageSize });
+    const { pdf, cached, ms } = await htmlToPdf(html, pageSize);
+    logger.info('Cover letter PDF rendered', { bytes: pdf.length, cached, ms, jobId, templateKey });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${file}.pdf"`);
+    res.setHeader('Content-Length', String(pdf.length));
+    res.end(pdf);
+  } catch (err) {
+    failure(err, res, next);
+  }
+}
+
+coverLetterRouter.get('/pdf', requireAuth, (req: AuthedRequest, res, next) =>
+  letterDownload(req, res, next, 'pdf'),
+);
+coverLetterRouter.get('/docx', requireAuth, (req: AuthedRequest, res, next) =>
+  letterDownload(req, res, next, 'docx'),
+);
