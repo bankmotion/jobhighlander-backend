@@ -7,6 +7,10 @@ export type AppliedFilter = 'all' | 'applied' | 'unapplied';
 
 export type DiscardedFilter = 'all' | 'discarded' | 'undiscarded';
 
+// Whether an interview timeline has been opened for the pairing. Per PROFILE,
+// like applied and discarded: an interview belongs to the profile that got it.
+export type InterviewFilter = 'all' | 'started' | 'notstarted';
+
 export interface ListJobsParams {
   sites?: string[];
   remote?: boolean;
@@ -14,6 +18,7 @@ export interface ListJobsParams {
   q?: string;
   applied?: AppliedFilter;
   discarded?: DiscardedFilter;
+  interview?: InterviewFilter;
   profileId?: number;
   page: number;
   pageSize: number;
@@ -21,7 +26,8 @@ export interface ListJobsParams {
 
 export const jobService = {
   async list(params: ListJobsParams) {
-    const { sites, remote, location, q, applied, discarded, profileId, page, pageSize } = params;
+    const { sites, remote, location, q, applied, discarded, interview, profileId, page, pageSize } =
+      params;
 
     const validSites = (sites ?? []).filter((s) => JOB_SITES.has(s)) as JobSite[];
 
@@ -39,12 +45,22 @@ export const jobService = {
           ? { discards: { some: { profileId } } }
           : { discards: { none: { profileId } } };
 
+    // Same shape as the two above, and ignored without a profile for the same
+    // reason: there is nothing to have an interview AS.
+    const interviewWhere: Prisma.JobWhereInput =
+      !profileId || !interview || interview === 'all'
+        ? {}
+        : interview === 'started'
+          ? { interviews: { some: { profileId } } }
+          : { interviews: { none: { profileId } } };
+
     const where: Prisma.JobWhereInput = {
       ...(validSites.length ? { site: { in: validSites } } : {}),
       ...(remote ? { remote: true } : {}),
       ...(location ? { location: { contains: location } } : {}),
       ...appliedWhere,
       ...discardedWhere,
+      ...interviewWhere,
       ...(q
         ? {
             OR: [

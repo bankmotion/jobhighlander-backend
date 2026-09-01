@@ -21,6 +21,7 @@ const listQuerySchema = z.object({
   q: z.string().trim().min(1).optional(),
   applied: z.enum(['all', 'applied', 'unapplied']).default('all'),
   discarded: z.enum(['all', 'discarded', 'undiscarded']).default('all'),
+  interview: z.enum(['all', 'started', 'notstarted']).default('all'),
   profileId: z.coerce.number().int().positive().optional(),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(20),
