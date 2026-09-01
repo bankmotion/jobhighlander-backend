@@ -23,6 +23,9 @@ const listQuerySchema = z.object({
   // '1'/'true' → remote-only. Absent → no remote filter.
   remote: z.string().optional(),
   q: z.string().trim().min(1).optional(),
+  company: z.string().trim().min(1).max(200).optional(),
+  title: z.string().trim().min(1).max(200).optional(),
+  description: z.string().trim().min(1).max(200).optional(),
   applied: z.enum(['all', 'applied', 'unapplied']).default('all'),
   discarded: z.enum(['all', 'discarded', 'undiscarded']).default('all'),
   interview: z.enum(['all', 'started', 'notstarted']).default('all'),

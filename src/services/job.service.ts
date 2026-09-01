@@ -16,6 +16,11 @@ export interface ListJobsParams {
   remote?: boolean;
   location?: string;
   q?: string;
+  /// Per-field substring matches. Independent of `q`, and AND-ed with each
+  /// other: each one narrows, where `q` widens across three columns at once.
+  company?: string;
+  title?: string;
+  description?: string;
   applied?: AppliedFilter;
   discarded?: DiscardedFilter;
   interview?: InterviewFilter;
@@ -26,7 +31,7 @@ export interface ListJobsParams {
 
 export const jobService = {
   async list(params: ListJobsParams) {
-    const { sites, remote, location, q, applied, discarded, interview, profileId, page, pageSize } =
+    const { sites, remote, location, q, company, title, description, applied, discarded, interview, profileId, page, pageSize } =
       params;
 
     const validSites = (sites ?? []).filter((s) => JOB_SITES.has(s)) as JobSite[];
@@ -58,6 +63,9 @@ export const jobService = {
       ...(validSites.length ? { site: { in: validSites } } : {}),
       ...(remote ? { remote: true } : {}),
       ...(location ? { location: { contains: location } } : {}),
+      ...(company ? { company: { contains: company } } : {}),
+      ...(title ? { title: { contains: title } } : {}),
+      ...(description ? { description: { contains: description } } : {}),
       ...appliedWhere,
       ...discardedWhere,
       ...interviewWhere,
@@ -107,7 +115,7 @@ export const jobService = {
   // matches what pressing the button would actually add rather than the whole
   // table's growth.
   async newerCount(params: ListJobsParams & { afterId: number }) {
-    const { afterId, sites, remote, location, q, profileId } = params;
+    const { afterId, sites, remote, location, q, company, title, description, profileId } = params;
     const validSites = (sites ?? []).filter((s) => JOB_SITES.has(s)) as JobSite[];
 
     const appliedWhere: Prisma.JobWhereInput =
@@ -137,6 +145,9 @@ export const jobService = {
         ...(validSites.length ? { site: { in: validSites } } : {}),
         ...(remote ? { remote: true } : {}),
         ...(location ? { location: { contains: location } } : {}),
+      ...(company ? { company: { contains: company } } : {}),
+      ...(title ? { title: { contains: title } } : {}),
+      ...(description ? { description: { contains: description } } : {}),
         ...appliedWhere,
         ...discardedWhere,
         ...interviewWhere,
