@@ -3,6 +3,33 @@ import { usableProfileWhere } from './profile.service';
 
 export type FunnelStage = 'applied' | 'interviewing' | 'offer' | 'accepted';
 
+// One row of the detailed applications list, shared by both dashboards.
+//
+// Title and company come from the APPLICATION, not the job: they are
+// denormalised on the row precisely so the record still reads after the posting
+// is deleted or deduplicated away. Site and location come from the job when it
+// still exists, and are null when it does not — which is honest, where showing
+// the job's current values would quietly rewrite history.
+export interface AppliedRow {
+  id: number;
+  jobId: number | null;
+  jobTitle: string;
+  jobCompany: string | null;
+  site: string | null;
+  location: string | null;
+  appliedAt: string;
+  byUserId: number;
+  byEmail: string;
+  profileId: number;
+  profileName: string;
+}
+
+// The list is capped so a year-long range cannot serialise the whole table into
+// one response. The dashboards compare its length against `totals.applications`
+// and say so when it is short, rather than presenting a truncated list as
+// complete.
+export const APPLIED_LIST_MAX = 2000;
+
 export interface BidPerformance {
   range: { days: number; from: string; to: string };
   totals: {
@@ -24,6 +51,8 @@ export interface BidPerformance {
   outcomes: { status: string; label: string; count: number }[];
   byUser: { userId: number; email: string; applications: number; interviews: number; offers: number }[];
   bidders: { userId: number; email: string }[];
+  /// Newest first, capped at APPLIED_LIST_MAX.
+  applied: AppliedRow[];
 }
 
 // ── Super-admin oversight view ──
@@ -101,6 +130,8 @@ export interface TeamBidPerformance {
   bySite: { site: string; applications: number; interviews: number; rate: number }[];
   byBidder: TeamBidder[];
   profiles: ProfileBidRow[];
+  /// Newest first, capped at APPLIED_LIST_MAX.
+  applied: AppliedRow[];
 }
 
 const OUTCOME_LABELS: Record<string, string> = {
@@ -176,8 +207,8 @@ export const statsService = {
           appliedAt: { gte: from, lte: to },
         },
         select: {
-          profileId: true, jobId: true, jobCompany: true, appliedAt: true,
-          markedById: true,
+          id: true, profileId: true, jobId: true, jobTitle: true, jobCompany: true,
+          appliedAt: true, markedById: true,
           markedBy: { select: { email: true } },
         },
       }),
@@ -244,9 +275,10 @@ export const statsService = {
     // into "Unknown" rather than silently vanishing from the breakdown.
     const jobIds = [...new Set(applications.map((a) => a.jobId).filter((v): v is number => v != null))];
     const jobs = jobIds.length
-      ? await prisma.job.findMany({ where: { id: { in: jobIds } }, select: { id: true, site: true } })
+      ? await prisma.job.findMany({ where: { id: { in: jobIds } }, select: { id: true, site: true, location: true } })
       : [];
     const siteOf = new Map(jobs.map((j) => [j.id, String(j.site)]));
+    const jobMeta = new Map(jobs.map((j) => [j.id, { site: String(j.site), location: j.location }]));
 
     let converted = 0;
     let offers = 0;
@@ -361,6 +393,7 @@ export const statsService = {
               .map(([id, v]) => ({ userId: id, ...v }))
               .sort((a, b) => b.applications - a.applications)
           : [],
+      applied: buildAppliedRows(applications, jobMeta, (id) => nameOf.get(id) ?? `Profile ${id}`),
     };
   },
 
@@ -392,8 +425,8 @@ export const statsService = {
       prisma.jobApplication.findMany({
         where: { appliedAt: { gte: from, lte: to } },
         select: {
-          profileId: true, jobId: true, jobCompany: true, appliedAt: true,
-          markedById: true, markedBy: { select: { email: true } },
+          id: true, profileId: true, jobId: true, jobTitle: true, jobCompany: true,
+          appliedAt: true, markedById: true, markedBy: { select: { email: true } },
         },
       }),
       // Unwindowed, and needed for the same reason as in `bidPerformance`: an
@@ -446,9 +479,10 @@ export const statsService = {
 
     const jobIds = [...new Set(applications.map((a) => a.jobId).filter((v): v is number => v != null))];
     const jobs = jobIds.length
-      ? await prisma.job.findMany({ where: { id: { in: jobIds } }, select: { id: true, site: true } })
+      ? await prisma.job.findMany({ where: { id: { in: jobIds } }, select: { id: true, site: true, location: true } })
       : [];
     const siteOf = new Map(jobs.map((j) => [j.id, String(j.site)]));
+    const jobMeta = new Map(jobs.map((j) => [j.id, { site: String(j.site), location: j.location }]));
 
     // Overall daily series, pre-seeded so empty days are plotted as zero rather
     // than closing the gap and implying activity that did not happen.
@@ -642,9 +676,50 @@ export const statsService = {
       profiles: profileRows.sort(
         (a, b) => b.totals.applications - a.totals.applications || a.name.localeCompare(b.name),
       ),
+      applied: buildAppliedRows(
+        applications,
+        jobMeta,
+        (id) => profileRows.find((r) => r.profileId === id)?.name ?? `Profile ${id}`,
+      ),
     };
   },
 };
+
+// Built once and used by both dashboards, so the two lists cannot disagree
+// about what a row means or how it is ordered.
+function buildAppliedRows(
+  applications: {
+    id: number; profileId: number; jobId: number | null; jobTitle: string;
+    jobCompany: string | null; appliedAt: Date; markedById: number;
+    markedBy: { email: string } | null;
+  }[],
+  jobMeta: Map<number, { site: string; location: string | null }>,
+  profileName: (id: number) => string,
+): AppliedRow[] {
+  return applications
+    // Newest first: the list is read as "what has been sent lately", and a
+    // stable secondary key on id keeps same-second rows from reordering
+    // between requests.
+    .slice()
+    .sort((a, b) => b.appliedAt.getTime() - a.appliedAt.getTime() || b.id - a.id)
+    .slice(0, APPLIED_LIST_MAX)
+    .map((a) => {
+      const meta = a.jobId != null ? jobMeta.get(a.jobId) : undefined;
+      return {
+        id: a.id,
+        jobId: a.jobId,
+        jobTitle: a.jobTitle,
+        jobCompany: a.jobCompany,
+        site: meta?.site ?? null,
+        location: meta?.location ?? null,
+        appliedAt: a.appliedAt.toISOString(),
+        byUserId: a.markedById,
+        byEmail: a.markedBy?.email ?? `User ${a.markedById}`,
+        profileId: a.profileId,
+        profileName: profileName(a.profileId),
+      } satisfies AppliedRow;
+    });
+}
 
 function dedupeUsers(
   rows: { id: number; email: string }[],
@@ -678,5 +753,6 @@ function emptyResult(days: number, from: Date, to: Date): BidPerformance {
     outcomes: [],
     byUser: [],
     bidders: [],
+    applied: [],
   };
 }
