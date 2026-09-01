@@ -15,18 +15,23 @@ function norm(s: string | null | undefined): string {
 
 const SEP = '|';
 
+// Location is deliberately absent — see the matching note on `_fingerprint`
+// in job-seeking/scraper/db.py. One requisition broadcast to every metro was
+// entering the table once per city.
+//
+// MUST stay in lockstep with that function: the two write the same column, so
+// a part added or removed here has to be added or removed there in the same
+// change, or the scraper and this script will disagree about job identity.
 export function fingerprint(job: {
   site: string;
   company: string | null;
   title: string;
-  location: string | null;
   description: string;
 }): string {
   const parts = [
     job.site,
     norm(job.company),
     norm(job.title),
-    norm(job.location),
     norm(job.description).slice(0, 100),
   ];
   return crypto.createHash('sha1').update(parts.join(SEP)).digest('hex');
@@ -98,17 +103,15 @@ async function main() {
     return;
   }
 
-  // 1. Stamp every row with its fingerprint BEFORE anything is deleted, so a
-  //    run interrupted here leaves the table consistent and simply re-runnable.
-  let stamped = 0;
-  for (const [id, fp] of fpOf) {
-    await prisma.job.update({ where: { id }, data: { fingerprint: fp } });
-    stamped++;
-  }
-  logger.info(`Stamped ${stamped} fingerprints`);
-
-  // 2. Merge each group inside a transaction: move the dependents that can
+  // 1. Merge each group inside a transaction: move the dependents that can
   //    move, drop the ones that would collide, then delete the loser rows.
+  //
+  //    ORDER MATTERS. Stamping every row first used to be safe, because with
+  //    location in the key each row hashed uniquely. It no longer does: the
+  //    rows in a group now share one fingerprint, and `UNIQUE(site,
+  //    fingerprint)` rejects the second stamp. Deleting the losers first is
+  //    what makes the surviving stamp free. A run interrupted here is still
+  //    re-runnable — the groups are recomputed from content each time.
   let movedResumes = 0;
   let droppedResumes = 0;
   let movedApps = 0;
@@ -177,12 +180,32 @@ async function main() {
       `${movedApps} applied marker(s) re-pointed, ${droppedApps} folded`,
   );
 
+  // 2. Stamp the survivors, now that nothing collides. Rows already carrying
+  //    the right value are skipped so a re-run is cheap.
+  const survivors = await prisma.job.findMany({
+    select: { id: true, site: true, company: true, title: true, description: true, fingerprint: true },
+  });
+  let stamped = 0;
+  for (const j of survivors) {
+    const fp = fingerprint(j);
+    if (fp === j.fingerprint) continue;
+    await prisma.job.update({ where: { id: j.id }, data: { fingerprint: fp } });
+    stamped++;
+  }
+  logger.info(`Stamped ${stamped} fingerprints`);
+
   const remaining = await prisma.job.count();
   logger.info(`Jobs now: ${remaining} (was ${jobs.length}, removed ${jobs.length - remaining})`);
 
+  // A TOTAL, not a delta — some of these may long pre-date this run. Reported
+  // as "orphaned by this run" it reads as damage the merge just caused, which
+  // sent one investigation chasing two resumes that were five days old.
   const orphanResumes = await prisma.resume.count({ where: { jobId: null } });
   const orphanApps = await prisma.jobApplication.count({ where: { jobId: null } });
-  logger.info(`Orphaned by this run: ${orphanResumes} resume(s), ${orphanApps} applied marker(s)`);
+  logger.info(
+    `Orphans in the table now (may pre-date this run): ${orphanResumes} resume(s), ` +
+      `${orphanApps} applied marker(s)`,
+  );
 }
 
 main()
