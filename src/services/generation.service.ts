@@ -8,7 +8,7 @@ import { usableProfileWhere } from './profile.service';
 import { saveResume, ResumeInputError, periodOf, yearsOf, profileIdentity } from './resume.service';
 import { assembleLetter, coverLetterService, type StoredCoverLetter } from './coverLetter.service';
 import { applicationDraftSchema, type ApplicationRequest } from '../schemas/generation.schema';
-import { sanitizeResume, sanitizeLetter } from '../resume/sanitize';
+import { sanitizeResume, sanitizeLetter, writeExperienceYears } from '../resume/sanitize';
 import type { TailoredResume } from '../schemas/resume.schema';
 
 function mapProviderError(err: unknown): never {
@@ -105,7 +105,8 @@ ${employment || '(none recorded)'}
 
 Total years of work: ${yearsOfWork || '(not derivable)'}
 This figure is computed from the dates above and is a FIXED FACT. State it in
-the summary as a word ("six years"). Do not recompute it and do not round it up.
+the summary in digits with a trailing plus ("10+ years"), which is the one place
+a plus sign belongs. Do not recompute it and do not round it up.
 
 Education — fixed facts:
 ${education || '(none recorded)'}
@@ -170,6 +171,10 @@ Produce the tailored resume and the cover letter paragraphs now.`;
     // The prompt asks for this and the model mostly complies; this is what makes
     // it certain, and it runs before BOTH documents so the two cannot disagree.
     const { resume } = sanitizeResume(res.parsed_output);
+    // The prompt asks for "10+ years"; this is what makes it certain. Applied
+    // to the summary alone, because that is the one sentence that states the
+    // career span — a "five years" inside a bullet is describing something else.
+    resume.summary = writeExperienceYears(resume.summary, yearsOfWork);
     // The letter goes through a STRICTER pass: it is pasted into an email as
     // plain text, so it keeps no tags at all, while the resume keeps its <b>.
     const coverLetter = sanitizeLetter(res.parsed_output.coverLetter);
