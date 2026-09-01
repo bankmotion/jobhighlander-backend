@@ -70,16 +70,40 @@ export async function saveResume(input: {
   const { profileId, jobId, userId, job, data, model } = input;
 
   try {
+    // The profile's CURRENT template. Read as the raw key rather than through
+    // `forProfile`, which resolves an unset default to the fallback preset —
+    // and "the profile has no default" has to stay distinguishable from "the
+    // default is the fallback", or a regenerate below would restyle a resume
+    // whose profile never expressed a preference.
+    const profile = await prisma.profile.findFirst({
+      where: { id: profileId, ...usableProfileWhere(userId) },
+      select: { defaultTemplateKey: true },
+    });
+    const defaultKey = profile?.defaultTemplateKey ?? null;
+    // Resolved once, and through `get` so an archived or renamed key lands on
+    // the fallback instead of being written back as a dead reference.
+    const resolvedKey = (await presetService.get(defaultKey)).key;
+
     await prisma.resume.upsert({
       where: { profileId_jobId: { profileId, jobId } },
       create: {
         profileId, jobId, jobTitle: job.title, jobCompany: job.company,
         data: data as never, model,
-        templateKey: (await presetService.forProfile(profileId, userId)).key,
+        templateKey: resolvedKey,
       },
       update: {
         data: data as never, model,
         jobTitle: job.title, jobCompany: job.company,
+        // Regeneration rebuilds the document from the profile as it stands NOW,
+        // so it picks up a template changed since the first run. Without this
+        // the row kept the key it was CREATED with: change the profile default,
+        // regenerate, and the old template came back — the row was updated
+        // everywhere except here.
+        //
+        // Only when the profile actually has a default. Writing the fallback
+        // over a resume belonging to a profile with none would silently
+        // restyle it, which is a different bug in the opposite direction.
+        ...(defaultKey ? { templateKey: resolvedKey } : {}),
       },
     });
     return true;
