@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma';
+import { logger } from './logger.service';
 import { ownedProfileWhere, usableProfileWhere } from './profile.service';
 import { FALLBACK_PRESET, LAYOUTS, type Preset } from '../resume/templates/registry';
 import { ACCENTS, DENSITIES, FONT_PAIRS } from '../resume/tokens';
@@ -36,7 +37,31 @@ export const presetService = {
       where: { id: profileId, ...ownedProfileWhere(ownerId) },
       data: { defaultTemplateKey: key },
     });
-    return r.count > 0;
+    if (r.count === 0) return false;
+
+    // Carry the change into the profile's existing resumes.
+    //
+    // Each resume stores the key it should render with, stamped when the row
+    // was created. Setting the profile default used to touch only the profile,
+    // so every document already generated kept rendering with the old
+    // template — you changed the template, opened a resume, and saw the one you
+    // had just replaced. The setting looked broken because for existing work it
+    // did nothing.
+    //
+    // Cost of doing it this way: a template applied to ONE resume through the
+    // per-resume picker is overwritten when the profile default next changes.
+    // That is the right trade — "set the template for this profile" reads as a
+    // statement about the profile's documents, not only its future ones.
+    const touched = await prisma.resume.updateMany({
+      where: { profileId },
+      data: { templateKey: key },
+    });
+    if (touched.count > 0) {
+      logger.info('Profile template applied to existing resumes', {
+        profileId, templateKey: key, resumes: touched.count,
+      });
+    }
+    return true;
   },
 
   async seed(): Promise<number> {
