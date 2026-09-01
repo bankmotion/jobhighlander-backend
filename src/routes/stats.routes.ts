@@ -35,7 +35,9 @@ function resolveWindow(q: z.infer<typeof query>): { from: Date; to: Date } | { e
     return { from, to };
   }
   const to = new Date();
-  return { from: new Date(to.getTime() - (q.days ?? 90) * DAY), to };
+  // 24 hours by default: the question these pages answer is "how is today
+  // going", and a 90-day window buried that in a quarter of history.
+  return { from: new Date(to.getTime() - (q.days ?? 1) * DAY), to };
 }
 
 // Every profile in the system with its members, for oversight. Super-admin

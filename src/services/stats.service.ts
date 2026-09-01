@@ -390,13 +390,15 @@ export const statsService = {
       bidders: dedupeUsers(
         memberRows.flatMap((p) => [p.owner, ...p.invitations.map((i) => i.user)]),
       ),
-      // Only worth a table when more than one person's bids are in view.
-      byUser:
-        allUsers && byUser.size > 1
-          ? [...byUser.entries()]
-              .map(([id, v]) => ({ userId: id, ...v }))
-              .sort((a, b) => b.applications - a.applications)
-          : [],
+      // Always populated, even for a single bidder. It used to be suppressed
+      // unless several people were in view, which was right when this only fed
+      // a table — a one-row table says nothing. It now also feeds the "Who bid"
+      // donut, and an empty array there left the chart blank on the default
+      // "just me" view. Deciding what is worth SHOWING belongs to the client;
+      // the service's job is to report what happened.
+      byUser: [...byUser.entries()]
+        .map(([id, v]) => ({ userId: id, ...v }))
+        .sort((a, b) => b.applications - a.applications),
       applied: buildAppliedRows(applications, jobMeta, (id) => nameOf.get(id) ?? `Profile ${id}`),
     };
   },
