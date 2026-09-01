@@ -1,7 +1,7 @@
 import { Router, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { statsService } from '../services/stats.service';
-import { requireAuth, type AuthedRequest } from '../middleware/auth.middleware';
+import { requireAuth, requireRole, type AuthedRequest } from '../middleware/auth.middleware';
 
 export const statsRouter = Router();
 
@@ -37,6 +37,30 @@ function resolveWindow(q: z.infer<typeof query>): { from: Date; to: Date } | { e
   const to = new Date();
   return { from: new Date(to.getTime() - (q.days ?? 90) * DAY), to };
 }
+
+// Every profile in the system with its members, for oversight. Super-admin
+// only: it deliberately ignores profile membership, which is the rule that
+// keeps one team's activity out of another team's view everywhere else.
+//
+// Registered BEFORE '/bid-performance' would not matter — the paths differ —
+// but it shares the same window parser so the two views cannot drift on what
+// "last 7 days" means.
+statsRouter.get(
+  '/bid-performance/all',
+  requireAuth,
+  requireRole('super_admin'),
+  async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const parsed = query.safeParse(req.query);
+      if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
+      const window = resolveWindow(parsed.data);
+      if ('error' in window) return res.status(400).json({ error: window.error });
+      res.json(await statsService.teamBidPerformance(window));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 statsRouter.get('/bid-performance', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {

@@ -26,6 +26,83 @@ export interface BidPerformance {
   bidders: { userId: number; email: string }[];
 }
 
+// ── Super-admin oversight view ──
+// One member's activity ON ONE PROFILE. The same person appears once per
+// profile they belong to, because "quiet on this profile, busy on that one" is
+// exactly the thing this view exists to show.
+export interface ProfileMemberStats {
+  userId: number;
+  email: string;
+  role: string;
+  isOwner: boolean;
+  applications: number;
+  interviews: number;
+  offers: number;
+  accepted: number;
+  rejected: number;
+  discarded: number;
+  companies: number;
+  activeInterviews: number;
+  rates: { interview: number; offer: number; accepted: number };
+  lastBidAt: string | null;
+}
+
+export interface ProfileBidRow {
+  profileId: number;
+  name: string;
+  owner: { id: number; email: string };
+  memberCount: number;
+  activeBidders: number;
+  totals: {
+    applications: number;
+    interviews: number;
+    offers: number;
+    accepted: number;
+    rejected: number;
+    discarded: number;
+    companies: number;
+    activeInterviews: number;
+  };
+  rates: { interview: number; offer: number; accepted: number };
+  lastBidAt: string | null;
+  members: ProfileMemberStats[];
+}
+
+// One person across ALL profiles.
+export interface TeamBidder {
+  userId: number;
+  email: string;
+  role: string;
+  profiles: number;
+  applications: number;
+  interviews: number;
+  offers: number;
+  accepted: number;
+  rates: { interview: number; offer: number; accepted: number };
+}
+
+export interface TeamBidPerformance {
+  range: { days: number; from: string; to: string };
+  totals: {
+    profiles: number;
+    members: number;
+    activeBidders: number;
+    applications: number;
+    interviews: number;
+    offers: number;
+    accepted: number;
+    rejected: number;
+    discarded: number;
+    companies: number;
+    activeInterviews: number;
+  };
+  rates: { interview: number; offer: number; accepted: number };
+  daily: { date: string; applications: number; interviews: number }[];
+  bySite: { site: string; applications: number; interviews: number; rate: number }[];
+  byBidder: TeamBidder[];
+  profiles: ProfileBidRow[];
+}
+
 const OUTCOME_LABELS: Record<string, string> = {
   active: 'In progress',
   offer: 'Offer',
@@ -284,6 +361,287 @@ export const statsService = {
               .map(([id, v]) => ({ userId: id, ...v }))
               .sort((a, b) => b.applications - a.applications)
           : [],
+    };
+  },
+
+  // Every profile in the system, each with its members and what each member
+  // actually did. Super-admin only.
+  //
+  // This is NOT `bidPerformance` with a wider filter. That one answers "how am
+  // I doing", starting from the profiles the caller may use and collapsing
+  // everything into one set of totals. This answers "who is doing the work",
+  // so the profile and the member are the axes and a member who sent nothing
+  // has to appear with a zero — an aggregate would simply omit them, which is
+  // the opposite of what an oversight view is for.
+  async teamBidPerformance(window: { from: Date; to: Date }): Promise<TeamBidPerformance> {
+    const { from, to } = window;
+    const days = Math.max(0, Math.round((to.getTime() - from.getTime()) / 86400000));
+
+    const [profiles, applications, bidsEver, interviews, discards] = await Promise.all([
+      // No `usableProfileWhere` — that is the whole point of this view.
+      prisma.profile.findMany({
+        select: {
+          id: true, firstName: true, lastName: true, email: true, createdAt: true,
+          owner: { select: { id: true, email: true, role: true } },
+          invitations: {
+            where: { status: 'accepted' },
+            select: { user: { select: { id: true, email: true, role: true } } },
+          },
+        },
+      }),
+      prisma.jobApplication.findMany({
+        where: { appliedAt: { gte: from, lte: to } },
+        select: {
+          profileId: true, jobId: true, jobCompany: true, appliedAt: true,
+          markedById: true, markedBy: { select: { email: true } },
+        },
+      }),
+      // Unwindowed, and needed for the same reason as in `bidPerformance`: an
+      // interview opened today can belong to a bid sent months ago, so
+      // attribution has to see the whole history, not just the window.
+      prisma.jobApplication.findMany({
+        select: { profileId: true, jobId: true, markedById: true },
+      }),
+      prisma.interview.findMany({
+        select: { profileId: true, jobId: true, status: true },
+      }),
+      prisma.jobDiscard.findMany({
+        where: { discardedAt: { gte: from, lte: to } },
+        select: { profileId: true, discardedById: true },
+      }),
+    ]);
+
+    // A bid is identified by (profile, job); an interview counts for the member
+    // who SENT that bid, regardless of who later logged the call.
+    const pairKey = (p: number, j: number | null) => `${p}:${j ?? 'x'}`;
+    const memberKey = (p: number, u: number) => `${p}:${u}`;
+
+    const interviewByPair = new Map<string, (typeof interviews)[number]>();
+    for (const iv of interviews) interviewByPair.set(pairKey(iv.profileId, iv.jobId), iv);
+
+    // (profile, member) -> the pairs they ever bid on. Lets a member's
+    // interviews be counted without re-querying per member.
+    const bidPairsByMember = new Map<string, Set<string>>();
+    for (const b of bidsEver) {
+      const k = memberKey(b.profileId, b.markedById);
+      const set = bidPairsByMember.get(k) ?? new Set<string>();
+      set.add(pairKey(b.profileId, b.jobId));
+      bidPairsByMember.set(k, set);
+    }
+
+    const discardsByMember = new Map<string, number>();
+    for (const d of discards) {
+      if (d.discardedById == null) continue;
+      const k = memberKey(d.profileId, d.discardedById);
+      discardsByMember.set(k, (discardsByMember.get(k) ?? 0) + 1);
+    }
+
+    const appsByMember = new Map<string, typeof applications>();
+    for (const a of applications) {
+      const k = memberKey(a.profileId, a.markedById);
+      const list = appsByMember.get(k) ?? [];
+      list.push(a);
+      appsByMember.set(k, list);
+    }
+
+    const jobIds = [...new Set(applications.map((a) => a.jobId).filter((v): v is number => v != null))];
+    const jobs = jobIds.length
+      ? await prisma.job.findMany({ where: { id: { in: jobIds } }, select: { id: true, site: true } })
+      : [];
+    const siteOf = new Map(jobs.map((j) => [j.id, String(j.site)]));
+
+    // Overall daily series, pre-seeded so empty days are plotted as zero rather
+    // than closing the gap and implying activity that did not happen.
+    const daily = new Map<string, { applications: number; interviews: number }>();
+    for (let i = 0; i <= days; i++) {
+      const at = new Date(from.getTime() + i * 86400000);
+      if (at.getTime() > to.getTime() + 86400000) break;
+      daily.set(dayKey(at), { applications: 0, interviews: 0 });
+    }
+    const bySiteAll = new Map<string, { applications: number; interviews: number }>();
+
+    const profileRows: ProfileBidRow[] = profiles.map((p) => {
+      const members = dedupeUsers([
+        p.owner,
+        ...p.invitations.map((i) => i.user),
+      ]).map((m) => {
+        const role =
+          p.owner.id === m.userId
+            ? p.owner.role
+            : p.invitations.find((i) => i.user.id === m.userId)?.user.role ?? 'bidder';
+        const k = memberKey(p.id, m.userId);
+        const mine = appsByMember.get(k) ?? [];
+        const everPairs = bidPairsByMember.get(k) ?? new Set<string>();
+
+        let interviewsWon = 0, offers = 0, accepted = 0, rejected = 0;
+        const companies = new Set<string>();
+        let lastBidAt: Date | null = null;
+
+        for (const a of mine) {
+          const iv = interviewByPair.get(pairKey(a.profileId, a.jobId));
+          if (iv) {
+            interviewsWon++;
+            if (OFFER_STATUSES.has(iv.status)) offers++;
+            if (iv.status === 'accepted') accepted++;
+            if (iv.status === 'rejected') rejected++;
+          }
+          const label = (a.jobCompany ?? '').trim();
+          if (label) companies.add(label.toLowerCase());
+          if (!lastBidAt || a.appliedAt > lastBidAt) lastBidAt = a.appliedAt;
+        }
+
+        // Live interviews are unwindowed: "in progress" is a statement about
+        // now, not about the reporting range.
+        const activeInterviews = interviews.filter(
+          (iv) => iv.status === 'active' && everPairs.has(pairKey(iv.profileId, iv.jobId)),
+        ).length;
+
+        const applied = mine.length;
+        return {
+          userId: m.userId,
+          email: m.email,
+          role: String(role),
+          isOwner: p.owner.id === m.userId,
+          applications: applied,
+          interviews: interviewsWon,
+          offers,
+          accepted,
+          rejected,
+          discarded: discardsByMember.get(k) ?? 0,
+          companies: companies.size,
+          activeInterviews,
+          rates: {
+            interview: pct(interviewsWon, applied),
+            offer: pct(offers, applied),
+            accepted: pct(accepted, applied),
+          },
+          lastBidAt: lastBidAt ? (lastBidAt as Date).toISOString() : null,
+        } satisfies ProfileMemberStats;
+      });
+
+      // Profile totals come from the profile's own applications, not from
+      // summing members: a bid whose author was deleted still belongs to the
+      // profile, and summing members would quietly drop it.
+      const profileApps = applications.filter((a) => a.profileId === p.id);
+      let pInterviews = 0, pOffers = 0, pAccepted = 0, pRejected = 0;
+      const pCompanies = new Set<string>();
+      let pLast: Date | null = null;
+
+      for (const a of profileApps) {
+        const iv = interviewByPair.get(pairKey(a.profileId, a.jobId));
+        if (iv) {
+          pInterviews++;
+          if (OFFER_STATUSES.has(iv.status)) pOffers++;
+          if (iv.status === 'accepted') pAccepted++;
+          if (iv.status === 'rejected') pRejected++;
+        }
+        const label = (a.jobCompany ?? '').trim();
+        if (label) pCompanies.add(label.toLowerCase());
+        if (!pLast || a.appliedAt > pLast) pLast = a.appliedAt;
+
+        const d = daily.get(dayKey(a.appliedAt));
+        if (d) { d.applications++; if (iv) d.interviews++; }
+
+        const site = (a.jobId != null ? siteOf.get(a.jobId) : undefined) ?? 'unknown';
+        const s = bySiteAll.get(site) ?? { applications: 0, interviews: 0 };
+        s.applications++; if (iv) s.interviews++; bySiteAll.set(site, s);
+      }
+
+      const applied = profileApps.length;
+      return {
+        profileId: p.id,
+        name: [p.firstName, p.lastName].filter(Boolean).join(' ') || p.email || `Profile ${p.id}`,
+        owner: { id: p.owner.id, email: p.owner.email },
+        memberCount: members.length,
+        activeBidders: members.filter((m) => m.applications > 0).length,
+        totals: {
+          applications: applied,
+          interviews: pInterviews,
+          offers: pOffers,
+          accepted: pAccepted,
+          rejected: pRejected,
+          discarded: discards.filter((d) => d.profileId === p.id).length,
+          companies: pCompanies.size,
+          activeInterviews: interviews.filter(
+            (iv) => iv.profileId === p.id && iv.status === 'active',
+          ).length,
+        },
+        rates: {
+          interview: pct(pInterviews, applied),
+          offer: pct(pOffers, applied),
+          accepted: pct(pAccepted, applied),
+        },
+        lastBidAt: pLast ? (pLast as Date).toISOString() : null,
+        members: members.sort((a, b) => b.applications - a.applications || a.email.localeCompare(b.email)),
+      } satisfies ProfileBidRow;
+    });
+
+    // One row per person across every profile, so a bidder working three
+    // profiles reads as one contributor rather than three part-timers.
+    const byBidder = new Map<number, TeamBidder>();
+    for (const row of profileRows) {
+      for (const m of row.members) {
+        const cur = byBidder.get(m.userId) ?? {
+          userId: m.userId, email: m.email, role: m.role,
+          profiles: 0, applications: 0, interviews: 0, offers: 0, accepted: 0,
+          rates: { interview: 0, offer: 0, accepted: 0 },
+        };
+        cur.profiles++;
+        cur.applications += m.applications;
+        cur.interviews += m.interviews;
+        cur.offers += m.offers;
+        cur.accepted += m.accepted;
+        byBidder.set(m.userId, cur);
+      }
+    }
+    for (const b of byBidder.values()) {
+      b.rates = {
+        interview: pct(b.interviews, b.applications),
+        offer: pct(b.offers, b.applications),
+        accepted: pct(b.accepted, b.applications),
+      };
+    }
+
+    const grand = profileRows.reduce(
+      (acc, r) => {
+        acc.applications += r.totals.applications;
+        acc.interviews += r.totals.interviews;
+        acc.offers += r.totals.offers;
+        acc.accepted += r.totals.accepted;
+        acc.rejected += r.totals.rejected;
+        acc.discarded += r.totals.discarded;
+        acc.activeInterviews += r.totals.activeInterviews;
+        return acc;
+      },
+      { applications: 0, interviews: 0, offers: 0, accepted: 0, rejected: 0, discarded: 0, activeInterviews: 0 },
+    );
+
+    return {
+      range: { days, from: from.toISOString(), to: to.toISOString() },
+      totals: {
+        ...grand,
+        profiles: profileRows.length,
+        members: byBidder.size,
+        activeBidders: [...byBidder.values()].filter((b) => b.applications > 0).length,
+        companies: new Set(
+          applications.map((a) => (a.jobCompany ?? '').trim().toLowerCase()).filter(Boolean),
+        ).size,
+      },
+      rates: {
+        interview: pct(grand.interviews, grand.applications),
+        offer: pct(grand.offers, grand.applications),
+        accepted: pct(grand.accepted, grand.applications),
+      },
+      daily: [...daily.entries()].map(([date, v]) => ({ date, ...v })),
+      bySite: [...bySiteAll.entries()]
+        .map(([site, v]) => ({ site, ...v, rate: pct(v.interviews, v.applications) }))
+        .sort((a, b) => b.applications - a.applications),
+      byBidder: [...byBidder.values()].sort(
+        (a, b) => b.applications - a.applications || a.email.localeCompare(b.email),
+      ),
+      profiles: profileRows.sort(
+        (a, b) => b.totals.applications - a.totals.applications || a.name.localeCompare(b.name),
+      ),
     };
   },
 };
