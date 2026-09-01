@@ -104,10 +104,12 @@ coverLetterRouter.put('/', requireAuth, async (req: AuthedRequest, res: Response
 // of what was written, including any hand edits, and re-running the model would
 // quietly hand the user a different letter than the one they reviewed.
 //
-// A 404 when no letter exists is deliberate and load-bearing: the job list
-// downloads the resume and the letter together, and asks for the letter
-// unconditionally rather than first checking whether there is one. A missing
-// letter has to be an ordinary "nothing here", not an error worth showing.
+// 204 when no letter exists, NOT 404. The job list asks for the letter
+// unconditionally rather than checking first, so "nothing written yet" is the
+// ordinary case and must pass quietly. It has to stay distinguishable from a
+// genuine 404 though: when these routes had no Next.js proxy in front of them,
+// the framework's own 404 looked exactly like "no letter" and the caller
+// swallowed it — the download silently produced one file for a day.
 const downloadQuery = z.object({
   jobId: z.coerce.number().int().positive(),
   profileId: z.coerce.number().int().positive(),
@@ -132,7 +134,7 @@ async function letterDownload(
 
     const letter = await coverLetterService.saved(jobId, profileId, userId);
     if (!letter) {
-      res.status(404).json({ error: 'No cover letter for this job yet' });
+      res.status(204).end();
       return;
     }
 
