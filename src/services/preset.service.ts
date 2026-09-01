@@ -39,26 +39,41 @@ export const presetService = {
     });
     if (r.count === 0) return false;
 
-    // Carry the change into the profile's existing resumes.
+    // Carry the change into the profile's existing resumes — but NEVER into one
+    // that has already been sent.
     //
-    // Each resume stores the key it should render with, stamped when the row
-    // was created. Setting the profile default used to touch only the profile,
-    // so every document already generated kept rendering with the old
-    // template — you changed the template, opened a resume, and saw the one you
-    // had just replaced. The setting looked broken because for existing work it
-    // did nothing.
+    // Each resume stores the key it renders with, stamped when the row was
+    // created, so changing only the profile left every existing document on the
+    // old template and the setting looked inert.
     //
-    // Cost of doing it this way: a template applied to ONE resume through the
-    // per-resume picker is overwritten when the profile default next changes.
-    // That is the right trade — "set the template for this profile" reads as a
-    // statement about the profile's documents, not only its future ones.
-    const touched = await prisma.resume.updateMany({
+    // The exception is the important half. A resume attached to a job you have
+    // applied to is a record of what an employer actually received. Restyling it
+    // afterwards means the history no longer shows what was sent, and nobody
+    // asked for that when they picked a new template. So the cascade covers the
+    // documents still in draft and stops at the ones already out the door.
+    //
+    // "Applied" is the app's own marker. A resume downloaded and sent outside
+    // the app is not known to be sent and will follow the new template.
+    const sent = await prisma.jobApplication.findMany({
       where: { profileId },
+      select: { jobId: true },
+    });
+    const sentJobIds = sent.map((s) => s.jobId).filter((id): id is number => id != null);
+
+    const touched = await prisma.resume.updateMany({
+      where: {
+        profileId,
+        // `notIn` alone would also skip rows whose job was deleted (jobId null),
+        // and those carry no application, so they are drafts and must follow.
+        ...(sentJobIds.length
+          ? { OR: [{ jobId: null }, { jobId: { notIn: sentJobIds } }] }
+          : {}),
+      },
       data: { templateKey: key },
     });
-    if (touched.count > 0) {
-      logger.info('Profile template applied to existing resumes', {
-        profileId, templateKey: key, resumes: touched.count,
+    if (touched.count > 0 || sentJobIds.length > 0) {
+      logger.info('Profile template applied to draft resumes', {
+        profileId, templateKey: key, updated: touched.count, preservedApplied: sentJobIds.length,
       });
     }
     return true;
