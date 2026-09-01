@@ -130,6 +130,10 @@ export interface TeamBidPerformance {
   bySite: { site: string; applications: number; interviews: number; rate: number }[];
   byBidder: TeamBidder[];
   profiles: ProfileBidRow[];
+  /// Every profile in the system, for the picker. Unaffected by `profileId`.
+  allProfiles: { id: number; name: string }[];
+  /// Which profile the figures are narrowed to, or null for all of them.
+  profileId: number | null;
   /// Newest first, capped at APPLIED_LIST_MAX.
   applied: AppliedRow[];
 }
@@ -406,13 +410,30 @@ export const statsService = {
   // so the profile and the member are the axes and a member who sent nothing
   // has to appear with a zero — an aggregate would simply omit them, which is
   // the opposite of what an oversight view is for.
-  async teamBidPerformance(window: { from: Date; to: Date }): Promise<TeamBidPerformance> {
+  async teamBidPerformance(
+    window: { from: Date; to: Date },
+    opts: { profileId?: number } = {},
+  ): Promise<TeamBidPerformance> {
     const { from, to } = window;
+    const { profileId } = opts;
     const days = Math.max(0, Math.round((to.getTime() - from.getTime()) / 86400000));
 
-    const [profiles, applications, bidsEver, interviews, discards] = await Promise.all([
+    // Narrowing to one profile is applied to EVERY query, not just the profile
+    // list. Filtering only the profiles would leave the totals, the donut and
+    // the daily series counting the whole organisation while the cards below
+    // showed one team — the kind of disagreement a reader trusts and should
+    // not.
+    const only = profileId ? { profileId } : {};
+
+    const [allProfiles, profiles, applications, bidsEver, interviews, discards] = await Promise.all([
+      // Always the full set, regardless of the filter: it populates the picker,
+      // which has to keep offering the other profiles once one is chosen.
+      prisma.profile.findMany({
+        select: { id: true, firstName: true, lastName: true, email: true },
+      }),
       // No `usableProfileWhere` — that is the whole point of this view.
       prisma.profile.findMany({
+        where: profileId ? { id: profileId } : {},
         select: {
           id: true, firstName: true, lastName: true, email: true, createdAt: true,
           owner: { select: { id: true, email: true, role: true } },
@@ -423,7 +444,7 @@ export const statsService = {
         },
       }),
       prisma.jobApplication.findMany({
-        where: { appliedAt: { gte: from, lte: to } },
+        where: { appliedAt: { gte: from, lte: to }, ...only },
         select: {
           id: true, profileId: true, jobId: true, jobTitle: true, jobCompany: true,
           appliedAt: true, markedById: true, markedBy: { select: { email: true } },
@@ -433,13 +454,15 @@ export const statsService = {
       // interview opened today can belong to a bid sent months ago, so
       // attribution has to see the whole history, not just the window.
       prisma.jobApplication.findMany({
+        where: only,
         select: { profileId: true, jobId: true, markedById: true },
       }),
       prisma.interview.findMany({
+        where: only,
         select: { profileId: true, jobId: true, status: true },
       }),
       prisma.jobDiscard.findMany({
-        where: { discardedAt: { gte: from, lte: to } },
+        where: { discardedAt: { gte: from, lte: to }, ...only },
         select: { profileId: true, discardedById: true },
       }),
     ]);
@@ -676,6 +699,13 @@ export const statsService = {
       profiles: profileRows.sort(
         (a, b) => b.totals.applications - a.totals.applications || a.name.localeCompare(b.name),
       ),
+      allProfiles: allProfiles
+        .map((p) => ({
+          id: p.id,
+          name: [p.firstName, p.lastName].filter(Boolean).join(' ') || p.email || `Profile ${p.id}`,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      profileId: profileId ?? null,
       applied: buildAppliedRows(
         applications,
         jobMeta,

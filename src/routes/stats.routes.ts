@@ -55,7 +55,7 @@ statsRouter.get(
       if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
       const window = resolveWindow(parsed.data);
       if ('error' in window) return res.status(400).json({ error: window.error });
-      res.json(await statsService.teamBidPerformance(window));
+      res.json(await statsService.teamBidPerformance(window, { profileId: parsed.data.profileId }));
     } catch (err) {
       next(err);
     }
