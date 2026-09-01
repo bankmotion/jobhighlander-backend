@@ -72,7 +72,7 @@ export const jobService = {
         : {}),
     };
 
-    const [total, items] = await Promise.all([
+    const [total, items, latest] = await Promise.all([
       prisma.job.count({ where }),
       prisma.job.findMany({
         where,
@@ -80,10 +80,16 @@ export const jobService = {
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
+      // The newest id matching these filters, independent of the page being
+      // read. Page 2's highest id is not the newest job, so polling for new
+      // arrivals from it would under- or over-count depending where the reader
+      // happens to be.
+      prisma.job.findFirst({ where, orderBy: { id: 'desc' }, select: { id: true } }),
     ]);
 
     return {
       items,
+      latestId: latest?.id ?? 0,
       pagination: {
         page,
         pageSize,
@@ -91,6 +97,60 @@ export const jobService = {
         totalPages: Math.max(1, Math.ceil(total / pageSize)),
       },
     };
+  },
+
+  // How many jobs newer than the one the client already has.
+  //
+  // Keyed on the highest id it holds, not on a timestamp: ids are autoincrement
+  // so "newer" is exact, and it cannot drift when the browser's clock and the
+  // server's disagree. The caller's filters are applied too, so the count
+  // matches what pressing the button would actually add rather than the whole
+  // table's growth.
+  async newerCount(params: ListJobsParams & { afterId: number }) {
+    const { afterId, sites, remote, location, q, profileId } = params;
+    const validSites = (sites ?? []).filter((s) => JOB_SITES.has(s)) as JobSite[];
+
+    const appliedWhere: Prisma.JobWhereInput =
+      !profileId || !params.applied || params.applied === 'all'
+        ? {}
+        : params.applied === 'applied'
+          ? { applications: { some: { profileId } } }
+          : { applications: { none: { profileId } } };
+
+    const discardedWhere: Prisma.JobWhereInput =
+      !profileId || !params.discarded || params.discarded === 'all'
+        ? {}
+        : params.discarded === 'discarded'
+          ? { discards: { some: { profileId } } }
+          : { discards: { none: { profileId } } };
+
+    const interviewWhere: Prisma.JobWhereInput =
+      !profileId || !params.interview || params.interview === 'all'
+        ? {}
+        : params.interview === 'started'
+          ? { interviews: { some: { profileId } } }
+          : { interviews: { none: { profileId } } };
+
+    return prisma.job.count({
+      where: {
+        id: { gt: afterId },
+        ...(validSites.length ? { site: { in: validSites } } : {}),
+        ...(remote ? { remote: true } : {}),
+        ...(location ? { location: { contains: location } } : {}),
+        ...appliedWhere,
+        ...discardedWhere,
+        ...interviewWhere,
+        ...(q
+          ? {
+              OR: [
+                { title: { contains: q } },
+                { description: { contains: q } },
+                { location: { contains: q } },
+              ],
+            }
+          : {}),
+      },
+    });
   },
 
   async getById(id: number) {

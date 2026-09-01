@@ -7,6 +7,10 @@ import type { AuthedRequest } from '../middleware/auth.middleware';
 
 export const jobRouter = Router();
 
+const newerQuerySchema = z.object({
+  afterId: z.coerce.number().int().nonnegative(),
+});
+
 const listQuerySchema = z.object({
   // `site` may repeat (?site=indeed&site=glassdoor) → array, or be a single value.
   site: z
@@ -57,6 +61,35 @@ jobRouter.get('/', async (req: AuthedRequest, res: Response, next: NextFunction)
 jobRouter.get('/filters', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await jobService.filters());
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Ahead of '/:id' deliberately: Express matches in order, and "new-count"
+// would otherwise be read as a job id.
+jobRouter.get('/new-count', async (req: AuthedRequest, res: Response, next: NextFunction) => {
+  try {
+    const parsed = listQuerySchema.safeParse(req.query);
+    const after = newerQuerySchema.safeParse(req.query);
+    if (!parsed.success || !after.success) {
+      return res.status(400).json({ error: 'Invalid query' });
+    }
+    const { site, remote, profileId, ...rest } = parsed.data;
+    const usable =
+      profileId !== undefined &&
+      (await prisma.profile.findFirst({
+        where: { id: profileId, ...usableProfileWhere(req.user!.id) },
+        select: { id: true },
+      }));
+    const count = await jobService.newerCount({
+      ...rest,
+      sites: site,
+      remote: remote === '1' || remote === 'true',
+      profileId: usable ? profileId : undefined,
+      afterId: after.data.afterId,
+    });
+    res.json({ count });
   } catch (err) {
     next(err);
   }
