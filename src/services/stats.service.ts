@@ -134,6 +134,10 @@ export interface TeamBidPerformance {
   allProfiles: { id: number; name: string }[];
   /// Which profile the figures are narrowed to, or null for all of them.
   profileId: number | null;
+  /// Which bidder the figures are narrowed to, or null for everyone.
+  bidder: number | null;
+  /// Everyone with access to the in-scope profiles, for the bidder picker.
+  bidders: { userId: number; email: string }[];
   /// Newest first, capped at APPLIED_LIST_MAX.
   applied: AppliedRow[];
 }
@@ -414,10 +418,10 @@ export const statsService = {
   // the opposite of what an oversight view is for.
   async teamBidPerformance(
     window: { from: Date; to: Date },
-    opts: { profileId?: number } = {},
+    opts: { profileId?: number; bidder?: number } = {},
   ): Promise<TeamBidPerformance> {
     const { from, to } = window;
-    const { profileId } = opts;
+    const { profileId, bidder } = opts;
     const days = Math.max(0, Math.round((to.getTime() - from.getTime()) / 86400000));
 
     // Narrowing to one profile is applied to EVERY query, not just the profile
@@ -426,6 +430,11 @@ export const statsService = {
     // showed one team — the kind of disagreement a reader trusts and should
     // not.
     const only = profileId ? { profileId } : {};
+    // Narrowing to one bidder filters the WORK, not the roster: the member
+    // tables still list everyone with access, so a teammate who sent nothing
+    // still shows a zero rather than disappearing.
+    const byWho = bidder ? { markedById: bidder } : {};
+    const discardedByWho = bidder ? { discardedById: bidder } : {};
 
     const [allProfiles, profiles, applications, bidsEver, interviews, discards] = await Promise.all([
       // Always the full set, regardless of the filter: it populates the picker,
@@ -446,7 +455,7 @@ export const statsService = {
         },
       }),
       prisma.jobApplication.findMany({
-        where: { appliedAt: { gte: from, lte: to }, ...only },
+        where: { appliedAt: { gte: from, lte: to }, ...only, ...byWho },
         select: {
           id: true, profileId: true, jobId: true, jobTitle: true, jobCompany: true,
           appliedAt: true, markedById: true, markedBy: { select: { email: true } },
@@ -456,7 +465,7 @@ export const statsService = {
       // interview opened today can belong to a bid sent months ago, so
       // attribution has to see the whole history, not just the window.
       prisma.jobApplication.findMany({
-        where: only,
+        where: { ...only, ...byWho },
         select: { profileId: true, jobId: true, markedById: true },
       }),
       prisma.interview.findMany({
@@ -464,7 +473,7 @@ export const statsService = {
         select: { profileId: true, jobId: true, status: true },
       }),
       prisma.jobDiscard.findMany({
-        where: { discardedAt: { gte: from, lte: to }, ...only },
+        where: { discardedAt: { gte: from, lte: to }, ...only, ...discardedByWho },
         select: { profileId: true, discardedById: true },
       }),
     ]);
@@ -708,6 +717,12 @@ export const statsService = {
         }))
         .sort((a, b) => a.name.localeCompare(b.name)),
       profileId: profileId ?? null,
+      bidder: bidder ?? null,
+      // Membership, not activity, and unaffected by the bidder filter — the
+      // picker has to keep offering the others once one is chosen.
+      bidders: dedupeUsers(
+        profiles.flatMap((p) => [p.owner, ...p.invitations.map((i) => i.user)]),
+      ),
       applied: buildAppliedRows(
         applications,
         jobMeta,

@@ -57,7 +57,13 @@ statsRouter.get(
       if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
       const window = resolveWindow(parsed.data);
       if ('error' in window) return res.status(400).json({ error: window.error });
-      res.json(await statsService.teamBidPerformance(window, { profileId: parsed.data.profileId }));
+      res.json(
+        await statsService.teamBidPerformance(window, {
+          profileId: parsed.data.profileId,
+          // 'all' is the default, so it needs no id; anything else names one.
+          bidder: typeof parsed.data.bidder === 'number' ? parsed.data.bidder : undefined,
+        }),
+      );
     } catch (err) {
       next(err);
     }
