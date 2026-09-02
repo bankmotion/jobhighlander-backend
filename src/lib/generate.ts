@@ -21,6 +21,20 @@ export interface AiResult<T> {
 }
 
 /**
+ * Anthropic system blocks, with the cache breakpoint on the LAST one when asked
+ * for — a breakpoint covers everything before it, so one at the end caches the
+ * whole prefix rather than only the first block.
+ */
+const systemBlocks = (system: string[], cache: boolean) =>
+  system.map((text, i) => ({
+    type: 'text' as const,
+    text,
+    ...(cache && i === system.length - 1
+      ? { cache_control: { type: 'ephemeral' as const } }
+      : {}),
+  }));
+
+/**
  * GPT-5.6 Luna reasons at `medium` by default. Reasoning tokens bill at the
  * output rate, and neither generator is a reasoning problem — the shape is
  * fixed by a schema and the facts are supplied — so this is held at `low`,
@@ -96,6 +110,19 @@ export interface CallInput {
   system: string[];
   user: string;
   maxTokens: number;
+  /**
+   * Ask for a cache breakpoint at the end of the system blocks.
+   *
+   * ONLY MEANINGFUL ON CLAUDE. OpenAI caches eligible prefixes automatically
+   * with nothing to declare, which is why the two providers were not costing
+   * the same for the same work before this existed.
+   *
+   * Set it where the prefix is genuinely repeated AND long enough to qualify:
+   * Haiku 4.5 needs 4096 tokens before caching engages, and a breakpoint under
+   * that is silently ignored — no error, just `cache_creation_input_tokens: 0`.
+   * Passing it on a short prefix is therefore harmless but pointless.
+   */
+  cacheSystem?: boolean;
 }
 
 /** A refusal, or a body nothing can be done with. The caller picks the status. */
@@ -119,7 +146,7 @@ export class AiOutputError extends Error {
 export async function structuredCall<S extends z4.ZodType>(
   input: CallInput & { schema: S; schemaName: string },
 ): Promise<AiResult<z4.infer<S>>> {
-  const { provider, system, user, maxTokens, schema, schemaName } = input;
+  const { provider, system, user, maxTokens, schema, schemaName, cacheSystem } = input;
   const model = PROVIDER_MODEL[provider];
 
   if (provider === 'claude') {
@@ -129,10 +156,7 @@ export async function structuredCall<S extends z4.ZodType>(
         max_tokens: maxTokens,
         // No `effort`: Haiku 4.5 rejects output_config.effort with a 400.
         output_config: { format: zodOutputFormat(schema) },
-        // No cache breakpoint: this prefix is well under the 4096 tokens Haiku
-        // 4.5 needs before caching engages, and a breakpoint below the minimum
-        // silently does nothing at all.
-        system: system.map((text) => ({ type: 'text' as const, text })),
+        system: systemBlocks(system, cacheSystem === true),
         messages: [{ role: 'user', content: user }],
       })
       .catch((err) => mapProviderError(provider, err));
@@ -196,7 +220,7 @@ export async function structuredCall<S extends z4.ZodType>(
 
 /** Prose, not a schema — the "Ask AI about a job" answer a person reads. */
 export async function textCall(input: CallInput): Promise<AiResult<string>> {
-  const { provider, system, user, maxTokens } = input;
+  const { provider, system, user, maxTokens, cacheSystem } = input;
   const model = PROVIDER_MODEL[provider];
 
   if (provider === 'claude') {
@@ -208,10 +232,8 @@ export async function textCall(input: CallInput): Promise<AiResult<string>> {
         // and forcing it through a JSON envelope would buy nothing and cost
         // tokens on both sides.
         //
-        // No `effort` and no `cache_control`: Haiku 4.5 rejects the first and
-        // needs a 4096-token prefix before caching engages, so a breakpoint
-        // here would silently do nothing. See lib/anthropic.ts.
-        system: system.map((text) => ({ type: 'text' as const, text })),
+        // No `effort`: Haiku 4.5 rejects it with a 400.
+        system: systemBlocks(system, cacheSystem === true),
         messages: [{ role: 'user', content: user }],
       })
       .catch((err) => mapProviderError(provider, err));

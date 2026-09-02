@@ -193,12 +193,22 @@ ${job.description.slice(0, JOB_DESCRIPTION_LIMIT)}
 
     // Prose rather than a schema: the answer is read by a person, and forcing
     // it through a JSON envelope would buy nothing and cost tokens on both
-    // sides. Prompt first, context second, so the stable half is cacheable.
+    // sides. Prompt first, context second, question last — the only part that
+    // changes between questions about one posting is the question itself.
+    //
+    // Cached, because that repetition is the whole shape of this feature: the
+    // panel offers four suggested questions and people ask several in a row.
+    // Once a resume and letter exist the prefix measures ~4.9k tokens and up to
+    // ~9.8k with every field at its cap, so it clears the 4096 Haiku needs;
+    // a bare posting falls short and simply does not cache. Worst case is a
+    // 1.25x write on one unrepeated question — fractions of a cent — against a
+    // 90% discount on every follow-up within the window.
     const call = await textCall({
       provider: chosen,
       system: [await promptService.text('job.query.system'), contextBlock],
       user: question,
       maxTokens: MAX_ANSWER_TOKENS,
+      cacheSystem: true,
     }).catch((err) => {
       if (err instanceof AiOutputError) {
         if (err.kind === 'refused') logger.warn('Job query refused', { jobId, profileId });
