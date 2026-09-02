@@ -19,6 +19,10 @@ const schema = z.object({
     (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
     z.string().min(1).optional(),
   ),
+  OPENAI_API_KEY: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    z.string().min(1).optional(),
+  ),
 });
 
 const parsed = schema.safeParse(process.env);
