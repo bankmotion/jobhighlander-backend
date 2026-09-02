@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { adminProfileService, profileService } from '../services/profile.service';
 import { invitationService, InvitationError } from '../services/invitation.service';
 import { requireAuth, requireRole, type AuthedRequest } from '../middleware/auth.middleware';
-import { logger } from '../services/logger.service';
 
 export const profileRouter = Router();
 
@@ -50,29 +49,11 @@ const profileSchema = z.object({
 
 const requireSuperAdmin = [requireAuth, requireRole('super_admin')];
 
-// The whole register, for oversight and for the AI switch. Placed above the
-// '/:id' routes below, or Express would match "all" as a profile id.
+// The whole register, for oversight. Placed above the '/:id' routes below, or
+// Express would match "all" as a profile id.
 profileRouter.get('/all', ...requireSuperAdmin, async (_req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     res.json(await adminProfileService.list());
-  } catch (err) {
-    next(err);
-  }
-});
-
-const aiToggleSchema = z.object({ enabled: z.boolean() });
-
-profileRouter.post('/:id/ai', ...requireSuperAdmin, async (req: AuthedRequest, res: Response, next: NextFunction) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid id' });
-    const parsed = aiToggleSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'enabled must be a boolean' });
-
-    const ok = await adminProfileService.setAiEnabled(id, parsed.data.enabled);
-    if (!ok) return res.status(404).json({ error: 'Profile not found' });
-    logger.info('Profile AI switch changed', { profileId: id, enabled: parsed.data.enabled, by: req.user!.id });
-    res.json({ ok: true, aiEnabled: parsed.data.enabled });
   } catch (err) {
     next(err);
   }

@@ -368,12 +368,6 @@ model Profile {
   /// rather than break every resume that referenced it.
   defaultTemplateKey String? @map("default_template_key") @db.VarChar(64)
 
-  /// Whether this profile may spend AI credit. Opt-in: a new profile starts
-  /// disabled and a super admin turns it on, so nobody can run up a bill on a
-  /// profile that was never meant to have one.
-  /// Enforced in the generation paths, not just the UI — a flag that only
-  /// greys out a button still lets a crafted request through.
-  aiEnabled Boolean @default(false) @map("ai_enabled")
 
   workExperiences WorkExperience[]
   educations      Education[]

@@ -186,7 +186,6 @@ export interface AdminProfileRow {
   location: string | null;
   owner: { id: number; email: string; role: string };
   memberCount: number;
-  aiEnabled: boolean;
   applications: number;
   resumes: number;
   createdAt: string;
@@ -198,10 +197,10 @@ export const adminProfileService = {
   // the team bid-performance view, and gated the same way at the route.
   async list(): Promise<AdminProfileRow[]> {
     const rows = await prisma.profile.findMany({
-      orderBy: [{ aiEnabled: 'desc' }, { updatedAt: 'desc' }],
+      orderBy: { updatedAt: 'desc' },
       select: {
         id: true, firstName: true, lastName: true, email: true, location: true,
-        aiEnabled: true, createdAt: true, updatedAt: true,
+        createdAt: true, updatedAt: true,
         owner: { select: { id: true, email: true, role: true } },
         invitations: { where: { status: 'accepted' }, select: { id: true } },
         _count: { select: { applications: true, resumes: true } },
@@ -217,21 +216,10 @@ export const adminProfileService = {
       // Owner plus accepted invitees, the same definition of "member" used
       // everywhere else.
       memberCount: 1 + p.invitations.length,
-      aiEnabled: p.aiEnabled,
       applications: p._count.applications,
       resumes: p._count.resumes,
       createdAt: p.createdAt.toISOString(),
       updatedAt: p.updatedAt.toISOString(),
     }));
-  },
-
-  async setAiEnabled(profileId: number, enabled: boolean): Promise<boolean> {
-    // updateMany rather than update: a missing id is a 404 for the caller, not
-    // a thrown Prisma error to translate.
-    const r = await prisma.profile.updateMany({
-      where: { id: profileId },
-      data: { aiEnabled: enabled },
-    });
-    return r.count > 0;
   },
 };

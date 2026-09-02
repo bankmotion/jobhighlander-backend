@@ -52,12 +52,6 @@ export const generationService = {
     // stop a repeated or crafted request, and this is the last point before a
     // billable call. 403, not 404 — the profile is theirs to see, it just may
     // not spend.
-    if (!profile.aiEnabled) {
-      throw new ResumeInputError(
-        'AI is switched off for this profile. Ask a super admin to enable it.',
-        403,
-      );
-    }
     await assertFunded(userId);
 
     const { name, contact } = profileIdentity(profile);
