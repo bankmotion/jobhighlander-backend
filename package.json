@@ -19,7 +19,8 @@
     "seed:interview-demo": "tsx src/scripts/seed-interview-demo.ts",
     "seed:demo": "tsx src/scripts/seed-demo.ts",
     "seed:demo:clear": "tsx src/scripts/seed-demo.ts --clear",
-    "backfill:ai-markup": "tsx src/scripts/backfill-ai-markup.ts"
+    "backfill:ai-markup": "tsx src/scripts/backfill-ai-markup.ts",
+    "grant:credit": "tsx src/scripts/grant-credit.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",

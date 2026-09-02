@@ -9,6 +9,7 @@ import {
   type TokenUsage,
 } from '../lib/pricing';
 import { aiRateService } from './aiRate.service';
+import { billingService } from './billing.service';
 import { logger } from './logger.service';
 
 export type AiFeature = 'application' | 'job_query' | 'resume' | 'cover_letter';
@@ -363,7 +364,8 @@ export const aiUsageService = {
         select: { email: true },
       });
 
-      await prisma.aiUsage.create({
+      const row = await prisma.aiUsage.create({
+        select: { id: true },
         data: {
           feature,
           model,
@@ -379,6 +381,17 @@ export const aiUsageService = {
           multiplierBp: priced.multiplierBp,
           priced: priced.priced,
         },
+      });
+
+      // Charged AFTER the usage row exists, so the ledger entry can point at
+      // the call that caused it. Never throws — the vendor has already been
+      // paid, and losing the document the user waited for to report a
+      // bookkeeping problem would be the worse trade.
+      await billingService.chargeUsage({
+        userId,
+        amountMicroUsd: priced.costMicroUsd,
+        aiUsageId: row.id,
+        note: `${featureLabel(feature)} · ${model}`,
       });
     } catch (err) {
       logger.error('Failed to record AI usage; spend for this call is missing', {

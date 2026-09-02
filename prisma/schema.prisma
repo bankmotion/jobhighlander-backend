@@ -200,7 +200,130 @@ model User {
   /// Anthropic calls made on this user's behalf, for cost attribution.
   aiUsage AiUsage[]
 
+  /// Prepaid balance in MICRO-USD — the same unit as `AiUsage.costMicroUsd`,
+  /// so a generation's cost can be subtracted from it without conversion.
+  /// USDT is treated as 1:1 with USD, which is what the deposit flow assumes.
+  ///
+  /// A CACHE, not the source of truth: it is only ever written alongside a
+  /// `CreditEntry` in the same transaction, and the entries are what can be
+  /// audited. Reading a single column keeps the top bar cheap; the ledger is
+  /// what answers "why is it this number".
+  balanceMicroUsd Int @default(0) @map("balance_micro_usd")
+
+  /// Every movement of this user's balance.
+  creditEntries CreditEntry[] @relation("CreditOwner")
+  /// Credits this super admin granted to somebody.
+  creditsGranted CreditEntry[] @relation("CreditCreatedBy")
+
+  /// Deposits this user says they made.
+  topUpRequests TopUpRequest[] @relation("TopUpRequester")
+  /// Deposit claims this super admin ruled on.
+  topUpsReviewed TopUpRequest[] @relation("TopUpReviewer")
+
   @@map("users")
+}
+
+/// The chains the deposit address accepts. Same address on both, which is why
+/// the chain has to be recorded — it is the only way to know where to look the
+/// transaction up.
+enum CryptoChain {
+  bep20
+  erc20
+}
+
+enum TopUpStatus {
+  pending
+  credited
+  rejected
+}
+
+/// A user's claim that they sent USDT to the deposit address.
+///
+/// A CLAIM, not a payment. Nothing here moves a balance on its own: a super
+/// admin verifies the hash on-chain and decides what to credit. The amount the
+/// user typed is kept separately from the amount actually granted, because the
+/// two disagreeing is the normal case this flow exists to catch.
+model TopUpRequest {
+  id Int @id @default(autoincrement())
+
+  userId Int  @map("user_id")
+  user   User @relation("TopUpRequester", fields: [userId], references: [id], onDelete: Cascade)
+
+  chain  CryptoChain
+  /// The transaction hash as pasted. Kept verbatim — normalising case would
+  /// make it harder to paste back into an explorer.
+  txHash String @map("tx_hash") @db.VarChar(120)
+
+  /// What the user says they sent, in micro-USD. Advisory only.
+  claimedMicroUsd Int @map("claimed_micro_usd")
+
+  status TopUpStatus @default(pending)
+
+  /// What was actually granted. Null until a super admin rules on it, and
+  /// deliberately allowed to differ from `claimedMicroUsd`.
+  creditedMicroUsd Int? @map("credited_micro_usd")
+
+  /// The user's note, then the reviewer's. Separate fields so a rejection
+  /// reason cannot overwrite what the user originally said.
+  note       String? @db.VarChar(500)
+  reviewNote String? @map("review_note") @db.VarChar(500)
+
+  reviewedById Int?      @map("reviewed_by_id")
+  reviewedBy   User?     @relation("TopUpReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime? @map("reviewed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// One claim per transaction per chain. The same hash submitted twice is the
+  /// obvious way to get paid twice, and the database is the only place that can
+  /// refuse it reliably — two admins reviewing at once would both see "pending".
+  @@unique([chain, txHash])
+  @@index([status, createdAt])
+  @@index([userId])
+  @@map("top_up_requests")
+}
+
+enum CreditEntryKind {
+  topup
+  usage
+  adjustment
+}
+
+/// One movement of one user's balance. Append-only.
+///
+/// Exists so a balance can always be explained. `balanceAfterMicroUsd` is
+/// recorded at write time rather than recomputed, so a later correction cannot
+/// silently rewrite the history of what the balance was when a call was made.
+model CreditEntry {
+  id Int @id @default(autoincrement())
+
+  userId Int  @map("user_id")
+  user   User @relation("CreditOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  kind CreditEntryKind
+
+  /// SIGNED micro-USD: positive credits, negative spends. Summing this column
+  /// for a user must equal their `balanceMicroUsd`, and that is the invariant
+  /// the reconcile script checks.
+  amountMicroUsd Int @map("amount_micro_usd")
+
+  balanceAfterMicroUsd Int @map("balance_after_micro_usd")
+
+  note String? @db.VarChar(500)
+
+  /// What caused it. Plain ints with no foreign key, same reasoning as
+  /// `AiUsage.jobId`: the ledger must outlive whatever it refers to.
+  aiUsageId      Int? @map("ai_usage_id")
+  topUpRequestId Int? @map("top_up_request_id")
+
+  /// The super admin who granted it, for credits that a person made happen.
+  createdById Int?  @map("created_by_id")
+  createdBy   User? @relation("CreditCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@map("credit_entries")
 }
 
 enum Role {

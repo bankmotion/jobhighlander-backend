@@ -19,6 +19,13 @@ const schema = z.object({
     (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
     z.string().min(1).optional(),
   ),
+  // Where USDT deposits are sent. One address serves both BEP20 and ERC20.
+  // Optional: the default in billing.service.ts is the address this deployment
+  // ships with, so a missing value is not a broken payment page.
+  USDT_DEPOSIT_ADDRESS: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    z.string().regex(/^0x[0-9a-fA-F]{40}$/, 'USDT_DEPOSIT_ADDRESS must be a 0x wallet address').optional(),
+  ),
   OPENAI_API_KEY: z.preprocess(
     (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
     z.string().min(1).optional(),

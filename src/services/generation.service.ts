@@ -5,6 +5,7 @@ import { logger } from './logger.service';
 import { promptService } from './prompt.service';
 import { aiUsageService } from './aiUsage.service';
 import { usableProfileWhere } from './profile.service';
+import { billingService } from './billing.service';
 import { saveResume, ResumeInputError, periodOf, yearsOf, profileIdentity } from './resume.service';
 import { assembleLetter, coverLetterService, type StoredCoverLetter } from './coverLetter.service';
 import { applicationDraftSchema, type ApplicationRequest } from '../schemas/generation.schema';
@@ -57,6 +58,7 @@ export const generationService = {
         403,
       );
     }
+    await assertFunded(userId);
 
     const { name, contact } = profileIdentity(profile);
 
@@ -205,6 +207,30 @@ Produce the tailored resume and the cover letter paragraphs now.`;
     };
   },
 };
+
+
+/**
+ * Refuse the call when the balance is spent.
+ *
+ * Checked on the ACTING USER, not the profile: a shared profile is used by
+ * several people and each pays for their own generations.
+ *
+ * A positive balance is required to START a call. The cost is not known until
+ * the vendor answers, so the last call a user makes can push them slightly
+ * negative — that debt is recorded rather than refused, and the next call is
+ * the one that gets blocked. 402, not 403: this is "pay for it", not "you may
+ * never do this".
+ */
+async function assertFunded(userId: number): Promise<void> {
+  const { canSpend, balanceUsd } = await billingService.balanceOf(userId);
+  if (!canSpend) {
+    throw new ResumeInputError(
+      `Your balance is ${balanceUsd < 0 ? '-' : ''}$${Math.abs(balanceUsd).toFixed(2)}. ` +
+        'Top up with USDT to keep using the AI.',
+      402,
+    );
+  }
+}
 
 /**
  * A refusal reproduces exactly on a retry and a malformed body does not, so the

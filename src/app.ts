@@ -19,6 +19,7 @@ import { coverLetterRouter } from './routes/coverLetter.routes';
 import { promptRouter } from './routes/prompt.routes';
 import { aiUsageRouter } from './routes/aiUsage.routes';
 import { aiRouter } from './routes/ai.routes';
+import { billingRouter } from './routes/billing.routes';
 import { requireAuth } from './middleware/auth.middleware';
 import { notFound, errorHandler } from './middleware/error.middleware';
 
@@ -51,6 +52,7 @@ export function createApp(): Application {
   app.use('/api/prompts', promptRouter);
   app.use('/api/ai-usage', aiUsageRouter);
   app.use('/api/ai', aiRouter);
+  app.use('/api/billing', billingRouter);
 
   app.use(notFound);
   app.use(errorHandler);

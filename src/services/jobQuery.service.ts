@@ -5,6 +5,7 @@ import { logger } from './logger.service';
 import { promptService } from './prompt.service';
 import { aiUsageService } from './aiUsage.service';
 import { usableProfileWhere } from './profile.service';
+import { billingService } from './billing.service';
 import { periodOf, yearsOf, profileIdentity, ResumeInputError } from './resume.service';
 import type { TailoredResume } from '../schemas/resume.schema';
 
@@ -129,6 +130,15 @@ export const jobQueryService = {
       throw new ResumeInputError(
         'AI is switched off for this profile. Ask a super admin to enable it.',
         403,
+      );
+    }
+    // Same gate as generation: Ask AI is a billable call and spends the same
+    // balance. See generation.service.ts for why a positive balance is the bar.
+    const funded = await billingService.balanceOf(userId);
+    if (!funded.canSpend) {
+      throw new ResumeInputError(
+        `Your balance is $${funded.balanceUsd.toFixed(2)}. Top up with USDT to keep using the AI.`,
+        402,
       );
     }
 
