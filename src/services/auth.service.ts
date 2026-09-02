@@ -18,7 +18,15 @@ export type RegisterResult =
   | { status: 'pending'; email: string }
   | { status: 'exists' };
 
-const PUBLIC_USER = { id: true, email: true, role: true, createdAt: true } as const;
+// `balanceMicroUsd` rides along because the user list is where an admin asks
+// "why can this person not generate anything" — the answer is usually here.
+const PUBLIC_USER = {
+  id: true,
+  email: true,
+  role: true,
+  createdAt: true,
+  balanceMicroUsd: true,
+} as const;
 
 let googleClient: OAuth2Client | null = null;
 function getGoogleClient(): OAuth2Client {

@@ -155,6 +155,32 @@ billingRouter.post('/top-ups/:id/reject', ...superAdminOnly, async (req: AuthedR
   }
 });
 
+/** The money history, across everyone. */
+billingRouter.get('/entries', ...superAdminOnly, async (req: AuthedRequest, res, next) => {
+  try {
+    const q = z
+      .object({
+        kind: z.enum(['topup', 'usage', 'adjustment']).optional(),
+        userId: z.coerce.number().int().positive().optional(),
+        limit: z.coerce.number().int().min(1).max(500).optional(),
+      })
+      .safeParse(req.query);
+    if (!q.success) return res.status(400).json({ error: 'Invalid query' });
+    res.json({ entries: await billingService.allEntries(q.data) });
+  } catch (err) {
+    failure(err, res, next);
+  }
+});
+
+/** Accounts a super admin can credit, with what they currently hold. */
+billingRouter.get('/users', ...superAdminOnly, async (_req: AuthedRequest, res, next) => {
+  try {
+    res.json({ users: await billingService.usersForCredit() });
+  } catch (err) {
+    failure(err, res, next);
+  }
+});
+
 /** Hand adjustment, either direction. Kept separate from the claim flow. */
 const adjustSchema = z.object({
   userId: z.coerce.number().int().positive(),

@@ -331,6 +331,43 @@ export const billingService = {
     return prisma.topUpRequest.findUniqueOrThrow({ where: { id: input.id }, select: topUpSelect });
   },
 
+  /**
+   * Every balance movement across every account, newest first.
+   *
+   * Separate from `listAllTopUps` because a deposit claim and a balance
+   * movement are not the same thing: a manual adjustment never has a claim
+   * behind it, and a rejected claim never moves a balance. This is the view
+   * that answers "where did the money actually go".
+   */
+  async allEntries(opts: { kind?: CreditEntryKind; userId?: number; limit?: number } = {}) {
+    return prisma.creditEntry.findMany({
+      where: {
+        ...(opts.kind ? { kind: opts.kind } : {}),
+        ...(opts.userId ? { userId: opts.userId } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(opts.limit ?? 100, 1), 500),
+      select: {
+        id: true,
+        kind: true,
+        amountMicroUsd: true,
+        balanceAfterMicroUsd: true,
+        note: true,
+        createdAt: true,
+        user: { select: { id: true, email: true } },
+        createdBy: { select: { id: true, email: true } },
+      },
+    });
+  },
+
+  /** Everyone who can be credited, for the manual deposit picker. */
+  usersForCredit() {
+    return prisma.user.findMany({
+      orderBy: { email: 'asc' },
+      select: { id: true, email: true, role: true, balanceMicroUsd: true },
+    });
+  },
+
   /** The user's own statement: what they were credited and what they spent. */
   ledger(userId: number, limit = 100) {
     return prisma.creditEntry.findMany({
