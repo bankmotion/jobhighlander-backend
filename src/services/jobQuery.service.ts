@@ -112,6 +112,14 @@ export const jobQueryService = {
     // A profile they may not use and one that does not exist are the same 404,
     // so the endpoint never confirms which profile ids are real.
     if (!profile) throw new ResumeInputError('Profile not found', 404);
+    // Same gate as resume generation: Ask AI is a billable call too, and a
+    // profile that may not spend must not spend here either.
+    if (!profile.aiEnabled) {
+      throw new ResumeInputError(
+        'AI is switched off for this profile. Ask a super admin to enable it.',
+        403,
+      );
+    }
 
     const context: QueryContext = {
       profile: true,

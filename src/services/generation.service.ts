@@ -61,6 +61,16 @@ export const generationService = {
 
     if (!job) throw new ResumeInputError('Job not found', 404);
     if (!profile) throw new ResumeInputError('Profile not found', 404);
+    // Checked here rather than only in the UI: the button being hidden does not
+    // stop a repeated or crafted request, and this is the last point before a
+    // billable call. 403, not 404 — the profile is theirs to see, it just may
+    // not spend.
+    if (!profile.aiEnabled) {
+      throw new ResumeInputError(
+        'AI is switched off for this profile. Ask a super admin to enable it.',
+        403,
+      );
+    }
 
     const { name, contact } = profileIdentity(profile);
 
