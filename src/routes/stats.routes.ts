@@ -14,6 +14,10 @@ const query = z.object({
   // Bounded: the aggregation loads the window's rows into memory, and a
   // multi-year range is a slow query for a chart nobody reads that far back.
   days: z.coerce.number().int().min(1).max(365).optional(),
+  // 'today' is the calendar day so far and is NOT `days=1`, which is a rolling
+  // 24 hours here. Both are offered because they answer different questions:
+  // "how has today gone" versus "what happened since this time yesterday".
+  preset: z.enum(['today', '24h']).optional(),
   from: isoDate.optional(),
   to: isoDate.optional(),
   profileId: z.coerce.number().int().positive().optional(),
@@ -35,9 +39,20 @@ function resolveWindow(q: z.infer<typeof query>): { from: Date; to: Date } | { e
     return { from, to };
   }
   const to = new Date();
+
+  if (q.preset === 'today') {
+    // Midnight UTC to now. Distinct from the rolling window below: at 09:00
+    // this is nine hours of data, not twenty-four.
+    return {
+      from: new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate())),
+      to,
+    };
+  }
+
   // 24 hours by default: the question these pages answer is "how is today
   // going", and a 90-day window buried that in a quarter of history.
-  return { from: new Date(to.getTime() - (q.days ?? 1) * DAY), to };
+  const days = q.preset === '24h' ? 1 : (q.days ?? 1);
+  return { from: new Date(to.getTime() - days * DAY), to };
 }
 
 // Every profile in the system with its members, for oversight. Super-admin

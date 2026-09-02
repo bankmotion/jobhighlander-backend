@@ -58,6 +58,10 @@ export interface UsageSummary {
   from: string;
   to: string;
   days: number;
+  /** Whether `daily` is bucketed by hour or by day, so the UI can title it. */
+  granularity: Granularity;
+  /** The range in words — "today", "the last 24 hours", "1 Sep – 8 Sep". */
+  rangeLabel: string;
   totals: UsageTotals;
   daily: UsageBucket[];
   /**
@@ -134,12 +138,117 @@ const emptyAcc = (): Accumulator => ({
   costMicroUsd: 0,
 });
 
-function usageWindow(days: number): { span: number; start: Date; end: Date } {
-  const span = Math.min(Math.max(Math.trunc(days) || 1, 1), MAX_RANGE_DAYS);
-  const end = new Date();
-  const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
+/**
+ * The two short presets, which are NOT the same thing.
+ *
+ *   today — the calendar day so far: 00:00 UTC until now. At 09:00 that is a
+ *           nine-hour window, and it resets at midnight.
+ *   24h   — a rolling day: the last 24 hours whenever you ask, which spans
+ *           two calendar dates for most of the day.
+ *
+ * Both are bucketed hourly. A one-day range drawn as a single daily bar says
+ * nothing about when the spend happened, which is the only question a range
+ * this short is asked.
+ */
+export type UsagePreset = 'today' | '24h';
+
+export interface RangeInput {
+  days?: number;
+  preset?: UsagePreset;
+  /** ISO dates (YYYY-MM-DD), inclusive on both ends. */
+  from?: string;
+  to?: string;
+}
+
+export type Granularity = 'hour' | 'day';
+
+interface UsageWindow {
+  start: Date;
+  end: Date;
+  /** How many empty buckets to draw, in `unit`s. */
+  buckets: number;
+  unit: Granularity;
+  /** Whole days spanned, for callers that still report a day count. */
+  days: number;
+  /** Human range for the page header, e.g. "today" or "1 Sep – 8 Sep". */
+  label: string;
+}
+
+const HOUR = 3_600_000;
+const DAY = 86_400_000;
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+const topOfHour = (d: Date): Date =>
+  new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours()));
+
+const startOfUtcDay = (d: Date): Date =>
+  new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+
+const shortDate = (d: Date): string =>
+  d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+export class RangeError extends Error {}
+
+/**
+ * Turn what the caller asked for into a concrete window.
+ *
+ * Throws rather than returning a sentinel: every caller would have to check it,
+ * and a range quietly falling back to "30 days" is the kind of wrong that shows
+ * plausible numbers for the wrong period.
+ */
+function usageWindow(input: RangeInput): UsageWindow {
+  const now = new Date();
+
+  if (input.from || input.to) {
+    if (!input.from || !input.to) {
+      throw new RangeError('Both from and to are required for a custom range');
+    }
+    if (!ISO_DATE.test(input.from) || !ISO_DATE.test(input.to)) {
+      throw new RangeError('Dates must be in YYYY-MM-DD form');
+    }
+    const start = new Date(`${input.from}T00:00:00.000Z`);
+    // Inclusive of the whole final day, so picking one date is a full day
+    // rather than a zero-length window.
+    const end = new Date(`${input.to}T23:59:59.999Z`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      throw new RangeError('Invalid dates');
+    }
+    if (start > end) throw new RangeError('from must be on or before to');
+    const buckets = Math.round((startOfUtcDay(end).getTime() - start.getTime()) / DAY) + 1;
+    if (buckets > MAX_RANGE_DAYS) {
+      throw new RangeError(`Range cannot exceed ${MAX_RANGE_DAYS} days`);
+    }
+    return {
+      start, end, buckets, unit: 'day', days: buckets,
+      label: input.from === input.to ? shortDate(start) : `${shortDate(start)} – ${shortDate(end)}`,
+    };
+  }
+
+  if (input.preset === '24h') {
+    // Ends at the top of the current hour plus the partial one in progress, so
+    // there are exactly 24 buckets and the newest is the hour you are in.
+    const start = new Date(topOfHour(now).getTime() - 23 * HOUR);
+    return { start, end: now, buckets: 24, unit: 'hour', days: 1, label: 'the last 24 hours' };
+  }
+
+  if (input.preset === 'today') {
+    const start = startOfUtcDay(now);
+    return {
+      start, end: now,
+      buckets: now.getUTCHours() + 1,
+      unit: 'hour', days: 1,
+      label: 'today',
+    };
+  }
+
+  const span = Math.min(Math.max(Math.trunc(input.days ?? 30) || 1, 1), MAX_RANGE_DAYS);
+  const start = startOfUtcDay(now);
   start.setUTCDate(start.getUTCDate() - (span - 1));
-  return { span, start, end };
+  return {
+    start, end: now, buckets: span, unit: 'day', days: span,
+    label: span === 1 ? 'today' : `${span} days`,
+  };
 }
 
 export interface UsageFilter {
@@ -147,8 +256,8 @@ export interface UsageFilter {
   profileId?: number | null;
 }
 
-const filterWhere = (start: Date, filter: UsageFilter) => ({
-  createdAt: { gte: start },
+const filterWhere = (start: Date, end: Date, filter: UsageFilter) => ({
+  createdAt: { gte: start, lte: end },
   ...(filter.userId != null ? { userId: filter.userId } : {}),
   ...(filter.profileId != null ? { profileId: filter.profileId } : {}),
 });
@@ -281,40 +390,41 @@ export const aiUsageService = {
     }
   },
 
-  async summary(days: number, userId: number): Promise<UsageSummary> {
-    const { span, start, end } = usageWindow(days);
+  async summary(range: RangeInput, userId: number): Promise<UsageSummary> {
+    const win = usageWindow(range);
 
     const [rows, multipliers] = await Promise.all([
       prisma.aiUsage.findMany({
-        where: { createdAt: { gte: start }, userId },
+        where: { createdAt: { gte: win.start, lte: win.end }, userId },
         select: ROW_SELECT,
         orderBy: { createdAt: 'asc' },
       }) as Promise<UsageRow[]>,
       aiRateService.multipliers(),
     ]);
 
-    return aggregate(rows, start, end, span, multipliers);
+    return aggregate(rows, win, multipliers);
   },
 
-  async adminSummary(days: number, filter: UsageFilter = {}): Promise<AdminUsageSummary> {
-    const { span, start, end } = usageWindow(days);
+  async adminSummary(range: RangeInput, filter: UsageFilter = {}): Promise<AdminUsageSummary> {
+    const win = usageWindow(range);
+    const { start, end } = win;
 
     // The two groupBys build the filter menus from the UNFILTERED window (see
     // `filters` on the type). They return distinct ids only — cheap next to
     // the row read, and they run alongside it.
     const [rows, userIds, profileIds, multipliers] = await Promise.all([
       prisma.aiUsage.findMany({
-        where: filterWhere(start, filter),
+        where: filterWhere(start, end, filter),
         select: ROW_SELECT,
         orderBy: { createdAt: 'asc' },
       }) as Promise<UsageRow[]>,
       prisma.aiUsage.groupBy({
         by: ['userId'],
-        where: { createdAt: { gte: start }, userId: { not: null } },
+        where: { createdAt: { gte: start, lte: end }, userId: { not: null } },
       }),
       prisma.aiUsage.groupBy({
         by: ['profileId'],
-        where: { createdAt: { gte: start }, profileId: { not: null } },
+        where: { createdAt: { gte: start, lte: end }, profileId: { not: null } },
       }),
       aiRateService.multipliers(),
     ]);
@@ -365,7 +475,7 @@ export const aiUsageService = {
     });
 
     return {
-      ...aggregate(rows, start, end, span, multipliers),
+      ...aggregate(rows, win, multipliers),
       byUser: collect(byUser).sort(byCostDesc),
       byProfile: collect(byProfile).sort(byCostDesc),
       scope: { userId: filter.userId ?? null, profileId: filter.profileId ?? null },
@@ -380,11 +490,11 @@ export const aiUsageService = {
     };
   },
 
-  async calls(days: number, filter: UsageFilter = {}, limit = 50, offset = 0): Promise<UsageCallPage> {
-    const { start } = usageWindow(days);
+  async calls(range: RangeInput, filter: UsageFilter = {}, limit = 50, offset = 0): Promise<UsageCallPage> {
+    const { start, end } = usageWindow(range);
     const take = Math.min(Math.max(Math.trunc(limit) || 1, 1), MAX_PAGE_SIZE);
     const skip = Math.max(Math.trunc(offset) || 0, 0);
-    const where = filterWhere(start, filter);
+    const where = filterWhere(start, end, filter);
 
     const [rows, total] = await Promise.all([
       prisma.aiUsage.findMany({
@@ -481,13 +591,26 @@ const collect = (map: BucketMap): UsageBucket[] =>
 const byCostDesc = (a: UsageBucket, b: UsageBucket): number =>
   b.costUsd - a.costUsd || b.calls - a.calls;
 
+/**
+ * Bucket keys sort lexicographically in both units, which is what the chart's
+ * ordering relies on. The label is what a person reads: a bare hour for an
+ * hourly range, since the date is already in the header.
+ */
+const bucketKey = (d: Date, unit: Granularity): string =>
+  unit === 'hour' ? `${utcDay(d)}T${String(d.getUTCHours()).padStart(2, '0')}` : utcDay(d);
+
+const bucketLabel = (key: string, unit: Granularity): string =>
+  unit === 'hour' ? `${key.slice(11, 13)}:00` : key;
+
+const stamp = (d: Date, unit: Granularity): string =>
+  unit === 'hour' ? `${utcDay(d)} ${String(d.getUTCHours()).padStart(2, '0')}:00` : utcDay(d);
+
 function aggregate(
   rows: UsageRow[],
-  start: Date,
-  end: Date,
-  span: number,
+  win: UsageWindow,
   multipliers: ProviderMultipliers,
 ): UsageSummary {
+  const { start, end, buckets, unit } = win;
   const day: BucketMap = new Map();
   const provider: BucketMap = new Map();
   const model: BucketMap = new Map();
@@ -496,19 +619,19 @@ function aggregate(
   const totals = emptyAcc();
   let unpricedCalls = 0;
 
-  // Zero-fill every day up front. A day with no generations is information,
-  // and a chart that omits it silently rescales the timeline.
-  for (let i = 0; i < span; i++) {
-    const d = new Date(start);
-    d.setUTCDate(d.getUTCDate() + i);
-    upsert(day, utcDay(d), { label: utcDay(d) });
+  // Zero-fill every bucket up front. A quiet hour or day is information, and a
+  // chart that omits it silently rescales the timeline.
+  for (let i = 0; i < buckets; i++) {
+    const d = new Date(start.getTime() + i * (unit === 'hour' ? HOUR : DAY));
+    const key = bucketKey(d, unit);
+    upsert(day, key, { label: bucketLabel(key, unit) });
   }
 
   for (const r of rows) {
-    const key = utcDay(r.createdAt);
+    const key = bucketKey(r.createdAt, unit);
     const targets = [
       totals,
-      upsert(day, key, { label: key }),
+      upsert(day, key, { label: bucketLabel(key, unit) }),
       upsert(provider, providerKey(providerOf(r.model)), { label: providerLabelOf(r.model) }),
       // The model labels the row and its vendor subtitles it, so two models
       // from different vendors never read as one undifferentiated line item.
@@ -521,9 +644,11 @@ function aggregate(
   }
 
   return {
-    from: utcDay(start),
-    to: utcDay(end),
-    days: span,
+    from: stamp(start, unit),
+    to: stamp(end, unit),
+    days: win.days,
+    granularity: unit,
+    rangeLabel: win.label,
     totals: toTotals(totals),
     daily: collect(day).sort((a, b) => a.key.localeCompare(b.key)),
     byProvider: collect(provider).sort(byCostDesc),

@@ -1,6 +1,12 @@
 import { Router, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
-import { aiUsageService, MAX_PAGE_SIZE, MAX_RANGE_DAYS } from '../services/aiUsage.service';
+import {
+  aiUsageService,
+  RangeError,
+  MAX_PAGE_SIZE,
+  MAX_RANGE_DAYS,
+  type RangeInput,
+} from '../services/aiUsage.service';
 import {
   aiRateService,
   MAX_MULTIPLIER,
@@ -13,9 +19,37 @@ export const aiUsageRouter = Router();
 
 const superAdminOnly = [requireAuth, requireRole('super_admin')];
 
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+/**
+ * `days` stays the default so links and stored preferences saved before
+ * presets existed keep working. `preset` and `from`/`to` are additive.
+ */
 const daysSchema = z.object({
   days: z.coerce.number().int().min(1).max(MAX_RANGE_DAYS).default(30),
+  preset: z.enum(['today', '24h']).optional(),
+  from: isoDate.optional(),
+  to: isoDate.optional(),
 });
+
+const toRange = (q: z.infer<typeof daysSchema>): RangeInput => ({
+  days: q.days,
+  preset: q.preset,
+  from: q.from,
+  to: q.to,
+});
+
+/**
+ * A bad range is the caller's mistake and has a specific fix ("to is before
+ * from"), so it is reported rather than folded into a generic 400.
+ */
+function rangeFailure(err: unknown, res: Response, next: NextFunction): void {
+  if (err instanceof RangeError) {
+    res.status(400).json({ error: err.message });
+    return;
+  }
+  next(err);
+}
 
 const adminQuerySchema = daysSchema.extend({
   userId: z.coerce.number().int().positive().optional().catch(undefined),
@@ -33,9 +67,9 @@ aiUsageRouter.get('/me', requireAuth, async (req: AuthedRequest, res: Response, 
     if (!parsed.success) {
       return res.status(400).json({ error: `days must be between 1 and ${MAX_RANGE_DAYS}` });
     }
-    res.json(await aiUsageService.summary(parsed.data.days, req.user!.id));
+    res.json(await aiUsageService.summary(toRange(parsed.data), req.user!.id));
   } catch (err) {
-    next(err);
+    rangeFailure(err, res, next);
   }
 });
 
@@ -45,10 +79,10 @@ aiUsageRouter.get('/all', ...superAdminOnly, async (req: AuthedRequest, res: Res
     if (!parsed.success) {
       return res.status(400).json({ error: `days must be between 1 and ${MAX_RANGE_DAYS}` });
     }
-    const { days, userId, profileId } = parsed.data;
-    res.json(await aiUsageService.adminSummary(days, { userId, profileId }));
+    const { userId, profileId } = parsed.data;
+    res.json(await aiUsageService.adminSummary(toRange(parsed.data), { userId, profileId }));
   } catch (err) {
-    next(err);
+    rangeFailure(err, res, next);
   }
 });
 
@@ -60,10 +94,12 @@ aiUsageRouter.get('/calls', ...superAdminOnly, async (req: AuthedRequest, res: R
         error: `days must be between 1 and ${MAX_RANGE_DAYS}, limit between 1 and ${MAX_PAGE_SIZE}`,
       });
     }
-    const { days, userId, profileId, limit, offset } = parsed.data;
-    res.json(await aiUsageService.calls(days, { userId, profileId }, limit, offset));
+    const { userId, profileId, limit, offset } = parsed.data;
+    res.json(
+      await aiUsageService.calls(toRange(parsed.data), { userId, profileId }, limit, offset),
+    );
   } catch (err) {
-    next(err);
+    rangeFailure(err, res, next);
   }
 });
 
