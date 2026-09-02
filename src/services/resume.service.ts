@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma';
+import { providerOf, providerLabelOf, type AiProvider } from '../lib/ai';
 import { presetService } from './preset.service';
 import { usableProfileWhere } from './profile.service';
 import { logger } from '../services/logger.service';
@@ -42,6 +43,13 @@ export interface ResumeStatus {
   jobId: number;
   templateKey: string;
   model: string;
+  /**
+   * Which vendor wrote it, derived from `model` rather than stored beside it —
+   * so a resume written before the picker existed still carries a correct
+   * badge, and the two can never drift apart.
+   */
+  provider: AiProvider | null;
+  providerLabel: string;
   updatedAt: Date;
   headline: string;
   inferredCount: number;
@@ -128,7 +136,12 @@ export const resumeService = {
     // for an unknown key, so a mismatch means the stored key is dead and the
     // client should show the fallback as selected rather than a phantom option.
     const preset = await presetService.get(row.templateKey);
-    return { ...row, templateKey: preset.key };
+    return {
+      ...row,
+      templateKey: preset.key,
+      provider: providerOf(row.model),
+      providerLabel: providerLabelOf(row.model),
+    };
   },
 
   async statusFor(jobIds: number[], profileId: number, userId: number): Promise<Record<number, ResumeStatus>> {
@@ -149,6 +162,8 @@ export const resumeService = {
         jobId: r.jobId,
         templateKey: r.templateKey,
         model: r.model,
+        provider: providerOf(r.model),
+        providerLabel: providerLabelOf(r.model),
         updatedAt: r.updatedAt,
         headline: d?.headline ?? '',
         inferredCount: countInferred(d),

@@ -1,7 +1,7 @@
 import { Router, type Response, type NextFunction } from 'express';
 import { coverLetterService, CoverLetterError } from '../services/coverLetter.service';
 import { generationService } from '../services/generation.service';
-import { aiEnabled } from '../lib/anthropic';
+import { aiEnabled } from '../lib/ai';
 import {
   coverLetterRequestSchema,
   coverLetterUpdateSchema,

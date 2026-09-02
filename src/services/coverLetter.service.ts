@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma';
+import { providerOf, providerLabelOf, type AiProvider } from '../lib/ai';
 import { usableProfileWhere } from './profile.service';
 
 export class CoverLetterError extends Error {
@@ -16,8 +17,27 @@ export interface StoredCoverLetter {
   reviewNotes: string[];
   edited: boolean;
   model: string;
+  /**
+   * Which vendor wrote it, derived from `model` rather than stored beside it —
+   * so a letter written before the picker existed still carries a correct
+   * badge, and the two can never drift apart.
+   */
+  provider: AiProvider | null;
+  providerLabel: string;
   updatedAt: Date;
 }
+
+type LetterRow = { body: string; reviewNotes: unknown; edited: boolean; model: string; updatedAt: Date };
+
+const shapeLetter = (row: LetterRow): StoredCoverLetter => ({
+  body: row.body,
+  reviewNotes: (row.reviewNotes as string[]) ?? [],
+  edited: row.edited,
+  model: row.model,
+  provider: providerOf(row.model),
+  providerLabel: providerLabelOf(row.model),
+  updatedAt: row.updatedAt,
+});
 
 const fmtDate = (d: Date) =>
   d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
@@ -79,7 +99,7 @@ export const coverLetterService = {
       select: { body: true, reviewNotes: true, edited: true, model: true, updatedAt: true },
     });
     if (!row) return null;
-    return { ...row, reviewNotes: (row.reviewNotes as string[]) ?? [] };
+    return shapeLetter(row);
   },
 
   async update(
@@ -99,7 +119,7 @@ export const coverLetterService = {
       data: { body, edited: true },
       select: { body: true, reviewNotes: true, edited: true, model: true, updatedAt: true },
     });
-    return { ...row, reviewNotes: (row.reviewNotes as string[]) ?? [] };
+    return shapeLetter(row);
   },
 
   async persist(input: {
@@ -123,6 +143,6 @@ export const coverLetterService = {
       },
       select: { body: true, reviewNotes: true, edited: true, model: true, updatedAt: true },
     });
-    return { ...row, reviewNotes: (row.reviewNotes as string[]) ?? [] };
+    return shapeLetter(row);
   },
 };

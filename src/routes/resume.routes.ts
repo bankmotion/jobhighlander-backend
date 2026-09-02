@@ -1,7 +1,7 @@
 import { Router, type Response, type NextFunction } from 'express';
 import { z as zod } from 'zod';
 import { requireAuth, type AuthedRequest } from '../middleware/auth.middleware';
-import { aiEnabled } from '../lib/anthropic';
+import { aiEnabled } from '../lib/ai';
 import { previewRequestSchema } from '../schemas/resume.schema';
 import { resumeService, ResumeInputError, profileIdentity } from '../services/resume.service';
 import { generationService } from '../services/generation.service';

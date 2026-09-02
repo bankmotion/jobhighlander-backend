@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma';
+import { providerOf, providerLabelOf, providerKey, type AiProvider } from '../lib/ai';
 import { priceUsage, rateCard, type TokenUsage } from '../lib/pricing';
 import { logger } from './logger.service';
 
@@ -51,6 +52,11 @@ export interface UsageSummary {
   days: number;
   totals: UsageTotals;
   daily: UsageBucket[];
+  /**
+   * Spend split by vendor. Derived from each row's model string, so it covers
+   * calls made before the app could choose a provider at all.
+   */
+  byProvider: UsageBucket[];
   byModel: UsageBucket[];
   byFeature: UsageBucket[];
   unpricedCalls: number;
@@ -76,6 +82,8 @@ export interface UsageCall {
   feature: string;
   featureLabel: string;
   model: string;
+  provider: AiProvider | null;
+  providerLabel: string;
   userId: number | null;
   userLabel: string;
   profileId: number | null;
@@ -387,6 +395,8 @@ export const aiUsageService = {
         feature: r.feature,
         featureLabel: featureLabel(r.feature),
         model: r.model,
+        provider: providerOf(r.model),
+        providerLabel: providerLabelOf(r.model),
         userId: r.userId,
         userLabel:
           (r.userId != null ? names.users.get(r.userId)?.label : null) ?? r.userEmail ?? 'Deleted user',
@@ -447,6 +457,7 @@ const byCostDesc = (a: UsageBucket, b: UsageBucket): number =>
 
 function aggregate(rows: UsageRow[], start: Date, end: Date, span: number): UsageSummary {
   const day: BucketMap = new Map();
+  const provider: BucketMap = new Map();
   const model: BucketMap = new Map();
   const feature: BucketMap = new Map();
 
@@ -466,7 +477,10 @@ function aggregate(rows: UsageRow[], start: Date, end: Date, span: number): Usag
     const targets = [
       totals,
       upsert(day, key, { label: key }),
-      upsert(model, r.model, { label: r.model }),
+      upsert(provider, providerKey(providerOf(r.model)), { label: providerLabelOf(r.model) }),
+      // The model labels the row and its vendor subtitles it, so two models
+      // from different vendors never read as one undifferentiated line item.
+      upsert(model, r.model, { label: r.model, sub: providerLabelOf(r.model) }),
       upsert(feature, r.feature, { label: featureLabel(r.feature) }),
     ];
 
@@ -480,6 +494,7 @@ function aggregate(rows: UsageRow[], start: Date, end: Date, span: number): Usag
     days: span,
     totals: toTotals(totals),
     daily: collect(day).sort((a, b) => a.key.localeCompare(b.key)),
+    byProvider: collect(provider).sort(byCostDesc),
     byModel: collect(model).sort(byCostDesc),
     byFeature: collect(feature).sort(byCostDesc),
     unpricedCalls,

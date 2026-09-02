@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
+import { AiProviderError } from '../lib/ai';
 import { logger } from '../services/logger.service';
 
 export function notFound(_req: Request, res: Response): void {
@@ -28,6 +29,16 @@ export function errorHandler(err: unknown, _req: Request, res: Response, next: N
   // Past the point of no return: let Express abort the stream.
   if (res.headersSent) {
     next(err);
+    return;
+  }
+
+  // Surfaced verbatim, including the 5xx cases. "OpenAI is not configured on
+  // this server" and "the key was rejected" name different fixes, and the
+  // generic handler below would flatten both into "Internal server error" —
+  // which is what sends someone hunting through logs for a one-line answer.
+  if (err instanceof AiProviderError) {
+    logger.warn('AI provider unavailable', { status: err.status, err: err.message });
+    res.status(err.status).json({ error: err.message });
     return;
   }
 

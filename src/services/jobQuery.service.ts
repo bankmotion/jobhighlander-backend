@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma';
-import { anthropic, MODEL } from '../lib/anthropic';
+import { providerOf, providerLabelOf, resolveProvider, type AiProvider } from '../lib/ai';
+import { AiOutputError, textCall } from '../lib/generate';
 import { logger } from './logger.service';
 import { promptService } from './prompt.service';
 import { aiUsageService } from './aiUsage.service';
@@ -21,6 +22,9 @@ export interface JobQueryRow {
   question: string;
   answer: string;
   model: string;
+  /** Derived from `model`, so answers written before providers existed still label. */
+  provider: AiProvider | null;
+  providerLabel: string;
   context: QueryContext;
   askedBy: string;
   createdAt: Date;
@@ -66,6 +70,8 @@ function shape(r: RawRow): JobQueryRow {
     question: r.question,
     answer: r.answer,
     model: r.model,
+    provider: providerOf(r.model),
+    providerLabel: providerLabelOf(r.model),
     context: {
       profile: Boolean(c.profile),
       resume: Boolean(c.resume),
@@ -82,9 +88,14 @@ export const jobQueryService = {
     profileId: number,
     questionRaw: string,
     userId: number,
+    provider?: AiProvider,
   ): Promise<JobQueryRow> {
     const question = questionRaw.trim();
     if (!question) throw new ResumeInputError('Ask a question first', 400);
+
+    // Resolved before the reads, same as generation: an unusable provider is a
+    // configuration answer, not something to discover after four queries.
+    const chosen = resolveProvider(provider);
 
     const [job, profile, resume, coverLetter] = await Promise.all([
       prisma.job.findUnique({
@@ -180,52 +191,34 @@ Description:
 ${job.description.slice(0, JOB_DESCRIPTION_LIMIT)}
 """`;
 
-    const res = await anthropic()
-      .messages.create({
-        model: MODEL,
-        max_tokens: MAX_ANSWER_TOKENS,
-        // Plain text, not a parsed schema: the answer is prose a person reads,
-        // and forcing it through a JSON envelope would buy nothing and cost
-        // tokens on both sides.
-        //
-        // No `effort` and no `cache_control`: Haiku 4.5 rejects the first and
-        // needs a 4096-token prefix before caching engages, so a breakpoint
-        // here would silently do nothing. See lib/anthropic.ts.
-        system: [
-          { type: 'text', text: await promptService.text('job.query.system') },
-          { type: 'text', text: contextBlock },
-        ],
-        messages: [{ role: 'user', content: question }],
-      })
-      .catch(mapProviderError);
+    // Prose rather than a schema: the answer is read by a person, and forcing
+    // it through a JSON envelope would buy nothing and cost tokens on both
+    // sides. Prompt first, context second, so the stable half is cacheable.
+    const call = await textCall({
+      provider: chosen,
+      system: [await promptService.text('job.query.system'), contextBlock],
+      user: question,
+      maxTokens: MAX_ANSWER_TOKENS,
+    }).catch((err) => {
+      if (err instanceof AiOutputError) {
+        if (err.kind === 'refused') logger.warn('Job query refused', { jobId, profileId });
+        throw new ResumeInputError(err.message, err.kind === 'refused' ? 422 : 502);
+      }
+      throw err;
+    });
 
-    // Recorded before the content checks: a response that arrives is a response
-    // that was billed, whether or not it turns out to be usable.
+    // Recorded before anything else: a response that arrives is a response that
+    // was billed, whether or not it turns out to be usable.
     await aiUsageService.record({
       feature: 'job_query',
-      model: MODEL,
+      model: call.model,
       userId,
       profileId,
       jobId,
-      usage: res.usage,
+      usage: call.usage,
     });
 
-    // Narrowed inline rather than with a type predicate: the SDK's union
-    // includes blocks that carry no `text` at all, and a hand-written guard has
-    // to match `ContentBlock` exactly to be assignable.
-    const answer = res.content
-      .map((b) => (b.type === 'text' ? b.text : ''))
-      .join('')
-      .trim();
-
-    if (res.stop_reason === 'refusal') {
-      logger.warn('Job query refused', { jobId, profileId });
-      throw new ResumeInputError('The model declined this question.', 422);
-    }
-    if (!answer) {
-      logger.error('Job query returned no text', { jobId, stop: res.stop_reason });
-      throw new ResumeInputError('The AI returned an empty answer. Try rephrasing.', 502);
-    }
+    const answer = call.output;
 
     const created = await prisma.jobAiQuery.create({
       data: {
@@ -236,7 +229,7 @@ ${job.description.slice(0, JOB_DESCRIPTION_LIMIT)}
         jobCompany: job.company,
         question,
         answer,
-        model: MODEL,
+        model: call.model,
         context,
         askedById: userId,
       },
@@ -246,10 +239,11 @@ ${job.description.slice(0, JOB_DESCRIPTION_LIMIT)}
     logger.info('Job query answered', {
       jobId,
       profileId,
+      provider: chosen,
+      model: call.model,
       chars: answer.length,
       context,
-      usage: res.usage,
-      truncated: res.stop_reason === 'max_tokens',
+      usage: call.usage,
     });
 
     return shape(created as RawRow);
@@ -296,26 +290,3 @@ ${job.description.slice(0, JOB_DESCRIPTION_LIMIT)}
   },
 };
 
-function mapProviderError(err: unknown): never {
-  const e = err as {
-    status?: number;
-    error?: { error?: { type?: string; message?: string } };
-    message?: string;
-  };
-  const msg = e.error?.error?.message ?? e.message ?? '';
-
-  if (/credit balance is too low/i.test(msg)) {
-    throw new ResumeInputError(
-      'The Anthropic account has no API credits. Add credits at platform.claude.com under Billing.',
-      503,
-    );
-  }
-  if (e.status === 401) {
-    throw new ResumeInputError('The Anthropic API key was rejected. Check ANTHROPIC_API_KEY.', 503);
-  }
-  if (e.status === 429) {
-    throw new ResumeInputError('Rate limited by Anthropic. Wait a moment and try again.', 429);
-  }
-  logger.error('Anthropic call failed', { status: e.status, msg });
-  throw new ResumeInputError('The AI service failed. Try again.', 502);
-}

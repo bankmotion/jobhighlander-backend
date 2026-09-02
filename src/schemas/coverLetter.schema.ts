@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import * as z4 from 'zod/v4';
+import { AI_PROVIDERS } from '../lib/ai';
 
 export const coverLetterRequestSchema = z.object({
   jobId: z.coerce.number().int().positive(),
   profileId: z.coerce.number().int().positive(),
   notes: z.string().trim().max(4_000).optional().default(''),
+  provider: z.enum(AI_PROVIDERS).optional(),
 });
 
 export type CoverLetterRequest = z.infer<typeof coverLetterRequestSchema>;

@@ -1,9 +1,12 @@
+import { providerOf, PROVIDER_LABEL, type AiProvider } from './ai';
+
 interface Rate {
   input: number;
   output: number;
 }
 
 const RATES: Readonly<Record<string, Rate>> = {
+  // ── Anthropic ─────────────────────────────────────────────────────────────
   'claude-opus-5': { input: 5, output: 25 },
   'claude-opus-4-8': { input: 5, output: 25 },
   'claude-opus-4-7': { input: 5, output: 25 },
@@ -17,8 +20,19 @@ const RATES: Readonly<Record<string, Rate>> = {
   'claude-sonnet-5': { input: 3, output: 15 },
   'claude-sonnet-4-6': { input: 3, output: 15 },
   'claude-haiku-4-5': { input: 1, output: 5 },
+
+  // ── OpenAI ────────────────────────────────────────────────────────────────
+  // Same reasoning as the Sonnet note above: Sol's promotional rate runs
+  // through 2026-11-21 and is not modelled, so a Sol call would be recorded at
+  // or above its real price rather than below it.
+  'gpt-5.6-sol': { input: 4, output: 20 },
+  'gpt-5.6-terra': { input: 2, output: 12 },
+  'gpt-5.6-luna': { input: 0.2, output: 1.2 },
 };
 
+// Both vendors happen to price cached input identically as a multiple of the
+// fresh input rate — a cache write at 1.25x and a read at 0.1x. If that ever
+// diverges these have to move onto the rate row rather than staying global.
 const CACHE_WRITE_MULTIPLIER = 1.25;
 const CACHE_READ_MULTIPLIER = 0.1;
 
@@ -64,12 +78,27 @@ export function priceUsage(model: string, usage: TokenUsage | null | undefined):
 
 export const isPricedModel = (model: string): boolean => model in RATES;
 
-export function rateCard(): Array<{ model: string; inputPerMTok: number; outputPerMTok: number; cacheWritePerMTok: number; cacheReadPerMTok: number }> {
-  return Object.entries(RATES).map(([model, r]) => ({
-    model,
-    inputPerMTok: r.input,
-    outputPerMTok: r.output,
-    cacheWritePerMTok: r.input * CACHE_WRITE_MULTIPLIER,
-    cacheReadPerMTok: r.input * CACHE_READ_MULTIPLIER,
-  }));
+export interface RateRow {
+  model: string;
+  provider: AiProvider | null;
+  providerLabel: string;
+  inputPerMTok: number;
+  outputPerMTok: number;
+  cacheWritePerMTok: number;
+  cacheReadPerMTok: number;
+}
+
+export function rateCard(): RateRow[] {
+  return Object.entries(RATES).map(([model, r]) => {
+    const provider = providerOf(model);
+    return {
+      model,
+      provider,
+      providerLabel: provider ? PROVIDER_LABEL[provider] : 'Unknown',
+      inputPerMTok: r.input,
+      outputPerMTok: r.output,
+      cacheWritePerMTok: r.input * CACHE_WRITE_MULTIPLIER,
+      cacheReadPerMTok: r.input * CACHE_READ_MULTIPLIER,
+    };
+  });
 }

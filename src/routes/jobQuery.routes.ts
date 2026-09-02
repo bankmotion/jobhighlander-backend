@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { jobQueryService } from '../services/jobQuery.service';
 import { ResumeInputError } from '../services/resume.service';
 import { MissingPromptError } from '../services/prompt.service';
-import { aiEnabled } from '../lib/anthropic';
+import { AI_PROVIDERS, aiEnabled } from '../lib/ai';
 import { requireAuth, type AuthedRequest } from '../middleware/auth.middleware';
 
 export const jobQueryRouter = Router();
@@ -38,6 +38,9 @@ jobQueryRouter.post('/', requireAuth, async (req: AuthedRequest, res: Response, 
         jobId: idParam,
         profileId: idParam,
         question: z.string().trim().min(1).max(QUESTION_MAX_CHARS),
+        // Optional: a client that never learned about providers still asks
+        // questions, and the server falls back to its configured default.
+        provider: z.enum(AI_PROVIDERS).optional(),
       })
       .safeParse(req.body);
     if (!parsed.success) {
@@ -45,8 +48,8 @@ jobQueryRouter.post('/', requireAuth, async (req: AuthedRequest, res: Response, 
         error: parsed.error.issues[0]?.message ?? 'Invalid request',
       });
     }
-    const { jobId, profileId, question } = parsed.data;
-    res.json(await jobQueryService.ask(jobId, profileId, question, req.user!.id));
+    const { jobId, profileId, question, provider } = parsed.data;
+    res.json(await jobQueryService.ask(jobId, profileId, question, req.user!.id, provider));
   } catch (err) {
     failure(err, res, next);
   }

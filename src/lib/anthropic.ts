@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { env } from '../config/env';
+import { PROVIDER_MODEL } from './ai';
 
 let client: Anthropic | undefined;
 
@@ -11,6 +12,8 @@ export function anthropic(): Anthropic {
   return client;
 }
 
-export const aiEnabled = (): boolean => Boolean(env.ANTHROPIC_API_KEY);
+export const MODEL = PROVIDER_MODEL.claude;
 
-export const MODEL = 'claude-haiku-4-5';
+// Re-exported so the many call sites that only need "is AI usable at all" do
+// not each have to know that the answer now spans two vendors.
+export { aiEnabled } from './ai';
