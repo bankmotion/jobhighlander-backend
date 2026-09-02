@@ -658,6 +658,16 @@ model AiUsage {
   /// cents, and float addition makes a month's total depend on summation order.
   costMicroUsd Int @default(0) @map("cost_micro_usd")
 
+  /// The markup in force WHEN THIS CALL RAN, in basis points of the vendor's
+  /// list price: 10000 is list, 12000 is 1.2x.
+  ///
+  /// Stored per row, not looked up at read time, for the same reason the rate
+  /// itself is baked into `costMicroUsd` — a super admin changing the markup
+  /// must not silently rewrite what last month cost. It also makes the
+  /// historical backfill idempotent: a row already carrying a markup is a row
+  /// the script has done, so re-running it cannot double-charge.
+  multiplierBp Int @default(10000) @map("multiplier_bp")
+
   /// False when the model had no rate in the table, so `costMicroUsd` is 0 and
   /// the dashboard reports the gap instead of quietly under-stating the bill.
   priced Boolean @default(true)
@@ -668,6 +678,38 @@ model AiUsage {
   @@index([createdAt])
   @@index([userId])
   @@map("ai_usage")
+}
+
+/// What this deployment charges for one provider's calls, over list price.
+///
+/// One row per provider, edited by a super admin. Absent row means "list
+/// price" — the app must keep pricing calls when this table is empty, so a
+/// missing row is a default and never an error.
+model AiProviderRate {
+  /// 'claude' | 'openai'. A plain string rather than an enum: providers are
+  /// added in code, and an enum would make every new one a schema migration.
+  provider String @id @db.VarChar(16)
+
+  /// Markup in BASIS POINTS of list price. 10000 = list, 12000 = 1.2x, 20000 = 2x.
+  ///
+  /// An integer for exactly the reason `costMicroUsd` is one: 1.2 is not
+  /// representable in binary floating point, and a markup that drifts in the
+  /// last decimal place makes two runs of the same report disagree.
+  multiplierBp Int @default(10000) @map("multiplier_bp")
+
+  /// Set the first time the historical backfill runs for this provider. The
+  /// script refuses to touch a provider that already has one, which is what
+  /// stops a second run from applying the markup on top of itself.
+  backfilledAt DateTime? @map("backfilled_at")
+
+  /// Who last changed it. Denormalised to an email rather than a foreign key,
+  /// same reasoning as `AiUsage.userEmail`: the audit trail has to survive the
+  /// account being deleted.
+  updatedByEmail String? @map("updated_by_email") @db.VarChar(255)
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("ai_provider_rates")
 }
 
 /// An interview stage badge — "Intro", "Live Coding", "Culture Fit"…

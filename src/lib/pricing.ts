@@ -1,4 +1,28 @@
-import { providerOf, PROVIDER_LABEL, type AiProvider } from './ai';
+import { providerOf, PROVIDER_LABEL, AI_PROVIDERS, type AiProvider } from './ai';
+
+/**
+ * Markups are held in BASIS POINTS of list price: 10000 is list, 12000 is 1.2x.
+ *
+ * Integer arithmetic end to end, for the same reason costs are integer
+ * micro-dollars — 1.2 has no exact binary representation, and a markup that
+ * drifts in the last place makes two runs of one report disagree.
+ */
+export const LIST_PRICE_BP = 10_000;
+
+export type ProviderMultipliers = Readonly<Record<AiProvider, number>>;
+
+export const LIST_MULTIPLIERS: ProviderMultipliers = Object.fromEntries(
+  AI_PROVIDERS.map((p) => [p, LIST_PRICE_BP]),
+) as ProviderMultipliers;
+
+/** The markup that applies to a model, defaulting to list for anything unknown. */
+export function multiplierFor(model: string, multipliers: ProviderMultipliers): number {
+  const provider = providerOf(model);
+  return provider ? (multipliers[provider] ?? LIST_PRICE_BP) : LIST_PRICE_BP;
+}
+
+const applyMarkup = (listMicroUsd: number, multiplierBp: number): number =>
+  Math.round((listMicroUsd * multiplierBp) / LIST_PRICE_BP);
 
 interface Rate {
   input: number;
@@ -48,14 +72,22 @@ export interface PricedUsage {
   cacheWriteTokens: number;
   cacheReadTokens: number;
   outputTokens: number;
+  /** What the vendor charges, before this deployment's markup. */
+  listMicroUsd: number;
+  /** What this deployment charges — `listMicroUsd` at `multiplierBp`. */
   costMicroUsd: number;
+  multiplierBp: number;
   priced: boolean;
 }
 
 const int = (v: number | null | undefined): number =>
   Number.isFinite(v) && (v as number) > 0 ? Math.round(v as number) : 0;
 
-export function priceUsage(model: string, usage: TokenUsage | null | undefined): PricedUsage {
+export function priceUsage(
+  model: string,
+  usage: TokenUsage | null | undefined,
+  multiplierBp: number = LIST_PRICE_BP,
+): PricedUsage {
   const inputTokens = int(usage?.input_tokens);
   const cacheWriteTokens = int(usage?.cache_creation_input_tokens);
   const cacheReadTokens = int(usage?.cache_read_input_tokens);
@@ -63,17 +95,26 @@ export function priceUsage(model: string, usage: TokenUsage | null | undefined):
 
   const rate = RATES[model];
   if (!rate) {
-    return { inputTokens, cacheWriteTokens, cacheReadTokens, outputTokens, costMicroUsd: 0, priced: false };
+    return {
+      inputTokens, cacheWriteTokens, cacheReadTokens, outputTokens,
+      listMicroUsd: 0, costMicroUsd: 0, multiplierBp, priced: false,
+    };
   }
 
-  const costMicroUsd = Math.round(
+  const listMicroUsd = Math.round(
     inputTokens * rate.input +
       cacheWriteTokens * rate.input * CACHE_WRITE_MULTIPLIER +
       cacheReadTokens * rate.input * CACHE_READ_MULTIPLIER +
       outputTokens * rate.output,
   );
 
-  return { inputTokens, cacheWriteTokens, cacheReadTokens, outputTokens, costMicroUsd, priced: true };
+  return {
+    inputTokens, cacheWriteTokens, cacheReadTokens, outputTokens,
+    listMicroUsd,
+    costMicroUsd: applyMarkup(listMicroUsd, multiplierBp),
+    multiplierBp,
+    priced: true,
+  };
 }
 
 export const isPricedModel = (model: string): boolean => model in RATES;
@@ -82,23 +123,38 @@ export interface RateRow {
   model: string;
   provider: AiProvider | null;
   providerLabel: string;
+  /** The markup as a plain number for display: 12000 bp reads as 1.2. */
+  multiplier: number;
+  /** What the vendor lists. Shown beside the billed rate so the markup is visible. */
+  listInputPerMTok: number;
+  listOutputPerMTok: number;
+  /**
+   * What this deployment actually bills — list x markup. These keep the plain
+   * names because they are the numbers every total on the page is built from;
+   * the vendor's own price is the qualified one.
+   */
   inputPerMTok: number;
   outputPerMTok: number;
   cacheWritePerMTok: number;
   cacheReadPerMTok: number;
 }
 
-export function rateCard(): RateRow[] {
+export function rateCard(multipliers: ProviderMultipliers = LIST_MULTIPLIERS): RateRow[] {
   return Object.entries(RATES).map(([model, r]) => {
     const provider = providerOf(model);
+    const bp = multiplierFor(model, multipliers);
+    const marked = (listRate: number) => (listRate * bp) / LIST_PRICE_BP;
     return {
       model,
       provider,
       providerLabel: provider ? PROVIDER_LABEL[provider] : 'Unknown',
-      inputPerMTok: r.input,
-      outputPerMTok: r.output,
-      cacheWritePerMTok: r.input * CACHE_WRITE_MULTIPLIER,
-      cacheReadPerMTok: r.input * CACHE_READ_MULTIPLIER,
+      multiplier: bp / LIST_PRICE_BP,
+      listInputPerMTok: r.input,
+      listOutputPerMTok: r.output,
+      inputPerMTok: marked(r.input),
+      outputPerMTok: marked(r.output),
+      cacheWritePerMTok: marked(r.input * CACHE_WRITE_MULTIPLIER),
+      cacheReadPerMTok: marked(r.input * CACHE_READ_MULTIPLIER),
     };
   });
 }

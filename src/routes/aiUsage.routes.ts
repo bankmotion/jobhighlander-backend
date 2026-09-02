@@ -1,6 +1,12 @@
 import { Router, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { aiUsageService, MAX_PAGE_SIZE, MAX_RANGE_DAYS } from '../services/aiUsage.service';
+import {
+  aiRateService,
+  MAX_MULTIPLIER,
+  MIN_MULTIPLIER,
+} from '../services/aiRate.service';
+import { AI_PROVIDERS } from '../lib/ai';
 import { requireAuth, requireRole, type AuthedRequest } from '../middleware/auth.middleware';
 
 export const aiUsageRouter = Router();
@@ -60,3 +66,44 @@ aiUsageRouter.get('/calls', ...superAdminOnly, async (req: AuthedRequest, res: R
     next(err);
   }
 });
+
+// ── Cost markup ──────────────────────────────────────────────────────────
+// What this deployment charges over the vendor's list price, per provider.
+//
+// Super admin only in both directions. Reading it exposes the margin the
+// business runs on, which is not something a bidder needs; writing it changes
+// what every future call costs.
+
+aiUsageRouter.get('/rates', ...superAdminOnly, async (_req: AuthedRequest, res: Response, next: NextFunction) => {
+  try {
+    res.json({ rates: await aiRateService.list() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const rateUpdateSchema = z.object({
+  provider: z.enum(AI_PROVIDERS),
+  // A plain decimal, because that is what a person types: 1.2, not 12000 bp.
+  // The basis-point conversion is the server's business.
+  multiplier: z.coerce.number().min(MIN_MULTIPLIER).max(MAX_MULTIPLIER),
+});
+
+aiUsageRouter.put('/rates', ...superAdminOnly, async (req: AuthedRequest, res: Response, next: NextFunction) => {
+  try {
+    const parsed = rateUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: `multiplier must be a number between ${MIN_MULTIPLIER} and ${MAX_MULTIPLIER}`,
+      });
+    }
+    const { provider, multiplier } = parsed.data;
+    // Applies to calls made FROM NOW ON. Rows already recorded keep the markup
+    // they were priced at — see aiRate.service.ts.
+    const rate = await aiRateService.set(provider, multiplier, req.user?.email ?? null);
+    res.json({ rate });
+  } catch (err) {
+    next(err);
+  }
+});
+

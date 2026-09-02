@@ -1,6 +1,14 @@
 import { prisma } from '../lib/prisma';
 import { providerOf, providerLabelOf, providerKey, type AiProvider } from '../lib/ai';
-import { priceUsage, rateCard, type TokenUsage } from '../lib/pricing';
+import {
+  LIST_PRICE_BP,
+  multiplierFor,
+  priceUsage,
+  rateCard,
+  type ProviderMultipliers,
+  type TokenUsage,
+} from '../lib/pricing';
+import { aiRateService } from './aiRate.service';
 import { logger } from './logger.service';
 
 export type AiFeature = 'application' | 'job_query' | 'resume' | 'cover_letter';
@@ -84,6 +92,12 @@ export interface UsageCall {
   model: string;
   provider: AiProvider | null;
   providerLabel: string;
+  /**
+   * The markup this row was billed at, as a plain number (1.2). Shown in the
+   * log so the effect of a markup change — or of the historical backfill — is
+   * visible per call rather than only in the totals.
+   */
+  multiplier: number;
   userId: number | null;
   userLabel: string;
   profileId: number | null;
@@ -142,6 +156,7 @@ const filterWhere = (start: Date, filter: UsageFilter) => ({
 const ROW_SELECT = {
   feature: true,
   model: true,
+  multiplierBp: true,
   userId: true,
   userEmail: true,
   profileId: true,
@@ -157,6 +172,7 @@ const ROW_SELECT = {
 interface UsageRow {
   feature: string;
   model: string;
+  multiplierBp: number;
   userId: number | null;
   userEmail: string | null;
   profileId: number | null;
@@ -217,7 +233,11 @@ async function nameLookups(
 export const aiUsageService = {
   async record({ feature, model, userId, profileId, jobId, usage }: RecordInput): Promise<void> {
     try {
-      const priced = priceUsage(model, usage);
+      // Read at record time, not at read time: this row is a receipt for what
+      // the call cost when it ran, and a later markup change must not rewrite
+      // it. `multipliers()` swallows its own failures and answers list price,
+      // so a rate-table problem can never lose the usage row itself.
+      const priced = priceUsage(model, usage, multiplierFor(model, await aiRateService.multipliers()));
 
       if (!priced.priced) {
         logger.warn('AI call used a model with no compiled-in rate; cost recorded as 0', {
@@ -247,6 +267,7 @@ export const aiUsageService = {
           cacheReadTokens: priced.cacheReadTokens,
           outputTokens: priced.outputTokens,
           costMicroUsd: priced.costMicroUsd,
+          multiplierBp: priced.multiplierBp,
           priced: priced.priced,
         },
       });
@@ -263,13 +284,16 @@ export const aiUsageService = {
   async summary(days: number, userId: number): Promise<UsageSummary> {
     const { span, start, end } = usageWindow(days);
 
-    const rows = (await prisma.aiUsage.findMany({
-      where: { createdAt: { gte: start }, userId },
-      select: ROW_SELECT,
-      orderBy: { createdAt: 'asc' },
-    })) as UsageRow[];
+    const [rows, multipliers] = await Promise.all([
+      prisma.aiUsage.findMany({
+        where: { createdAt: { gte: start }, userId },
+        select: ROW_SELECT,
+        orderBy: { createdAt: 'asc' },
+      }) as Promise<UsageRow[]>,
+      aiRateService.multipliers(),
+    ]);
 
-    return aggregate(rows, start, end, span);
+    return aggregate(rows, start, end, span, multipliers);
   },
 
   async adminSummary(days: number, filter: UsageFilter = {}): Promise<AdminUsageSummary> {
@@ -278,7 +302,7 @@ export const aiUsageService = {
     // The two groupBys build the filter menus from the UNFILTERED window (see
     // `filters` on the type). They return distinct ids only — cheap next to
     // the row read, and they run alongside it.
-    const [rows, userIds, profileIds] = await Promise.all([
+    const [rows, userIds, profileIds, multipliers] = await Promise.all([
       prisma.aiUsage.findMany({
         where: filterWhere(start, filter),
         select: ROW_SELECT,
@@ -292,6 +316,7 @@ export const aiUsageService = {
         by: ['profileId'],
         where: { createdAt: { gte: start }, profileId: { not: null } },
       }),
+      aiRateService.multipliers(),
     ]);
 
     const optionUserIds = userIds.map((u) => u.userId).filter((id): id is number => id != null);
@@ -340,7 +365,7 @@ export const aiUsageService = {
     });
 
     return {
-      ...aggregate(rows, start, end, span),
+      ...aggregate(rows, start, end, span, multipliers),
       byUser: collect(byUser).sort(byCostDesc),
       byProfile: collect(byProfile).sort(byCostDesc),
       scope: { userId: filter.userId ?? null, profileId: filter.profileId ?? null },
@@ -397,6 +422,7 @@ export const aiUsageService = {
         model: r.model,
         provider: providerOf(r.model),
         providerLabel: providerLabelOf(r.model),
+        multiplier: r.multiplierBp / LIST_PRICE_BP,
         userId: r.userId,
         userLabel:
           (r.userId != null ? names.users.get(r.userId)?.label : null) ?? r.userEmail ?? 'Deleted user',
@@ -455,7 +481,13 @@ const collect = (map: BucketMap): UsageBucket[] =>
 const byCostDesc = (a: UsageBucket, b: UsageBucket): number =>
   b.costUsd - a.costUsd || b.calls - a.calls;
 
-function aggregate(rows: UsageRow[], start: Date, end: Date, span: number): UsageSummary {
+function aggregate(
+  rows: UsageRow[],
+  start: Date,
+  end: Date,
+  span: number,
+  multipliers: ProviderMultipliers,
+): UsageSummary {
   const day: BucketMap = new Map();
   const provider: BucketMap = new Map();
   const model: BucketMap = new Map();
@@ -498,6 +530,6 @@ function aggregate(rows: UsageRow[], start: Date, end: Date, span: number): Usag
     byModel: collect(model).sort(byCostDesc),
     byFeature: collect(feature).sort(byCostDesc),
     unpricedCalls,
-    rates: rateCard(),
+    rates: rateCard(multipliers),
   };
 }
