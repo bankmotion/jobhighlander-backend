@@ -19,6 +19,16 @@ export async function requireAuth(req: AuthedRequest, res: Response, next: NextF
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
+    // The role is BAKED INTO the token, so a token issued before a role change
+    // still asserts the old one. Authorization below already uses the database
+    // role and was never fooled — but the token itself has to die too, or a
+    // demoted user keeps a session that looks valid for the rest of its 24
+    // hours and every screen they load is built from a role they no longer
+    // hold. Rejecting on mismatch is what makes a role change log them out.
+    if (user.role !== payload.role) {
+      res.status(401).json({ error: 'Your access level changed. Sign in again.' });
+      return;
+    }
     req.user = user;
     next();
   } catch (err) {

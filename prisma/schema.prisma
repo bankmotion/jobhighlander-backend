@@ -172,6 +172,11 @@ model User {
   role         Role     @default(guest)
   createdAt    DateTime @default(now()) @map("created_at")
 
+  /// When this account last signed in. Null means never since the column was
+  /// added, which is why the admin table says "never" rather than showing a
+  /// blank — an empty cell reads as a rendering bug.
+  lastLoginAt DateTime? @map("last_login_at")
+
   profiles Profile[]
 
   /// Invitations addressed to this user (profiles others let them use).

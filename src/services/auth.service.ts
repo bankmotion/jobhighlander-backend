@@ -4,6 +4,7 @@ import { OAuth2Client } from 'google-auth-library';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
 import { env } from '../config/env';
+import { logger } from './logger.service';
 
 export type Role = 'super_admin' | 'admin' | 'bidder' | 'guest';
 
@@ -25,6 +26,7 @@ const PUBLIC_USER = {
   email: true,
   role: true,
   createdAt: true,
+  lastLoginAt: true,
   balanceMicroUsd: true,
 } as const;
 
@@ -49,6 +51,21 @@ function unusablePasswordHash(): Promise<string> {
 export type GoogleLoginResult =
   | { ok: true; token: string; email: string; role: Role }
   | { ok: false; reason: 'invalid' | 'unverified' | 'pending' };
+
+/**
+ * Stamp the sign-in.
+ *
+ * Never throws: a bookkeeping column must not be able to block someone from
+ * logging in. A missing timestamp is a gap in a report; a failed login is an
+ * outage.
+ */
+async function touchLogin(userId: number): Promise<void> {
+  try {
+    await prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
+  } catch (err) {
+    logger.warn('Could not record last login', { userId, err: String(err) });
+  }
+}
 
 export const authService = {
   signToken(payload: AuthTokenPayload): string {
@@ -89,6 +106,7 @@ export const authService = {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) return { ok: false, reason: 'invalid' };
     if (user.role === 'guest') return { ok: false, reason: 'pending' };
+    await touchLogin(user.id);
     return {
       ok: true,
       token: this.signToken({ sub: user.id, email: user.email, role: user.role }),
@@ -127,6 +145,7 @@ export const authService = {
       });
     }
     if (user.role === 'guest') return { ok: false, reason: 'pending' };
+    await touchLogin(user.id);
     return {
       ok: true,
       token: this.signToken({ sub: user.id, email: user.email, role: user.role as Role }),

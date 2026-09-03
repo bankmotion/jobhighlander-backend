@@ -14,7 +14,11 @@ const schema = z.object({
     (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
     z.string().min(1).optional(),
   ),
-  JWT_EXPIRES_IN: z.string().default('7d'),
+  // 24 hours. Must stay in step with the auth cookie's `maxAge` in the Next
+  // app: a cookie that outlives its token leaves someone looking signed in
+  // while every request 401s, which reads as the app being broken rather than
+  // as a session that ended.
+  JWT_EXPIRES_IN: z.string().default('24h'),
   ANTHROPIC_API_KEY: z.preprocess(
     (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
     z.string().min(1).optional(),
