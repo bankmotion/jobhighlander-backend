@@ -88,6 +88,23 @@ billingRouter.post('/top-ups', requireAuth, async (req: AuthedRequest, res, next
 
 // ── Review queue (super admin) ────────────────────────────────────────────
 
+/**
+ * Just the count, for the sidebar badge.
+ *
+ * Its own endpoint rather than counting the full list: this is read on every
+ * page load, and shipping up to 200 claim rows to render one number would put
+ * the whole queue on the wire for every navigation.
+ *
+ * Two segments, so it cannot be captured by the '/top-ups/:id/...' routes below.
+ */
+billingRouter.get('/top-ups/pending-count', ...superAdminOnly, async (_req: AuthedRequest, res, next) => {
+  try {
+    res.json({ pending: await billingService.countPendingTopUps() });
+  } catch (err) {
+    failure(err, res, next);
+  }
+});
+
 billingRouter.get('/top-ups/all', ...superAdminOnly, async (req: AuthedRequest, res, next) => {
   try {
     const status = z.enum(['pending', 'credited', 'rejected']).optional().safeParse(req.query.status);
@@ -150,6 +167,15 @@ billingRouter.post('/top-ups/:id/reject', ...superAdminOnly, async (req: AuthedR
       byId: req.user!.id,
     });
     res.json({ request });
+  } catch (err) {
+    failure(err, res, next);
+  }
+});
+
+/** Per-account totals and the margin, for the payments screen. */
+billingRouter.get('/overview', ...superAdminOnly, async (_req: AuthedRequest, res, next) => {
+  try {
+    res.json(await billingService.overview());
   } catch (err) {
     failure(err, res, next);
   }

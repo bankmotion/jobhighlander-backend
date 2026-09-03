@@ -1,6 +1,7 @@
 import { Prisma, type CreditEntryKind, type CryptoChain, type TopUpStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../config/env';
+import { LIST_PRICE_BP } from '../lib/pricing';
 import { logger } from './logger.service';
 
 /**
@@ -57,6 +58,45 @@ export const toMicro = (usd: number): number => Math.round(usd * MICRO);
  * a reviewer has to act on, and a typo here costs a round trip each way.
  */
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/;
+
+export interface AccountSummary {
+  id: number;
+  email: string;
+  role: string;
+  balanceMicroUsd: number;
+  depositedMicroUsd: number;
+  /** Taken off a balance. Can be less than `chargedMicroUsd` — see `overview`. */
+  spentMicroUsd: number;
+  adjustedMicroUsd: number;
+  generations: number;
+  /** Everything this user's calls cost, balance or no balance. */
+  chargedMicroUsd: number;
+  lastActivityAt: string | null;
+}
+
+export interface MoneyDay {
+  /** YYYY-MM-DD, UTC. */
+  day: string;
+  creditedMicroUsd: number;
+  spentMicroUsd: number;
+}
+
+export interface BillingOverview {
+  accounts: AccountSummary[];
+  /** Last 30 UTC days, zero-filled, oldest first. */
+  series: MoneyDay[];
+  totals: {
+    heldMicroUsd: number;
+    depositedMicroUsd: number;
+    spentMicroUsd: number;
+    adjustedMicroUsd: number;
+    generations: number;
+    chargedMicroUsd: number;
+    vendorCostMicroUsd: number;
+    marginMicroUsd: number;
+    fundedAccounts: number;
+  };
+}
 
 export interface BalanceView {
   balanceMicroUsd: number;
@@ -115,6 +155,47 @@ async function post(
   });
 
   return user.balanceMicroUsd;
+}
+
+const SERIES_DAYS = 30;
+
+async function dailyMoney(): Promise<MoneyDay[]> {
+  const start = new Date();
+  start.setUTCHours(0, 0, 0, 0);
+  start.setUTCDate(start.getUTCDate() - (SERIES_DAYS - 1));
+
+  const rows = await prisma.$queryRaw<
+    { day: string; credited: number | null; spent: number | null }[]
+  >`
+    SELECT DATE(created_at) AS day,
+           SUM(CASE WHEN amount_micro_usd > 0 THEN amount_micro_usd ELSE 0 END) AS credited,
+           SUM(CASE WHEN kind = 'usage' THEN -amount_micro_usd ELSE 0 END) AS spent
+      FROM credit_entries
+     WHERE created_at >= ${start}
+     GROUP BY DATE(created_at)`;
+
+  const byDay = new Map(
+    rows.map((r) => [
+      // MySQL DATE() comes back as a Date or a string depending on driver
+      // settings; normalising here keeps the key stable either way.
+      typeof r.day === 'string' ? r.day.slice(0, 10) : new Date(r.day).toISOString().slice(0, 10),
+      { credited: Number(r.credited ?? 0), spent: Number(r.spent ?? 0) },
+    ]),
+  );
+
+  const out: MoneyDay[] = [];
+  for (let i = 0; i < SERIES_DAYS; i++) {
+    const d = new Date(start);
+    d.setUTCDate(d.getUTCDate() + i);
+    const key = d.toISOString().slice(0, 10);
+    const hit = byDay.get(key);
+    out.push({
+      day: key,
+      creditedMicroUsd: Math.round(hit?.credited ?? 0),
+      spentMicroUsd: Math.round(hit?.spent ?? 0),
+    });
+  }
+  return out;
 }
 
 export const billingService = {
@@ -358,6 +439,114 @@ export const billingService = {
         createdBy: { select: { id: true, email: true } },
       },
     });
+  },
+
+  /**
+   * The whole money picture, for the payments screen.
+   *
+   * Two figures that look similar and are not:
+   *   charged — what users were billed, at this deployment's markup.
+   *   list    — what the vendors charge for the same calls.
+   * The gap between them is the margin, and it is the only reason the markup
+   * exists, so it is worth stating rather than leaving to be derived.
+   *
+   * `spent` counts only what has actually been taken off a balance. It is
+   * SMALLER than `charged` on any deployment that ran AI before balances
+   * existed — those calls were billed to nobody — and the two are shown
+   * separately rather than reconciled, because pretending they match would
+   * hide exactly that history.
+   */
+  async overview(): Promise<BillingOverview> {
+    const [users, byUserKind, usageByUser, margin] = await Promise.all([
+      prisma.user.findMany({
+        orderBy: { email: 'asc' },
+        select: { id: true, email: true, role: true, balanceMicroUsd: true },
+      }),
+      prisma.creditEntry.groupBy({
+        by: ['userId', 'kind'],
+        _sum: { amountMicroUsd: true },
+        _max: { createdAt: true },
+      }),
+      prisma.aiUsage.groupBy({
+        by: ['userId'],
+        _count: { _all: true },
+        _sum: { costMicroUsd: true },
+        _max: { createdAt: true },
+      }),
+      // Raw because the list price is derived from a column: cost was stored
+      // already marked up, so dividing it back out is the only way to recover
+      // what the vendor charged.
+      prisma.$queryRaw<{ charged: number | null; list: number | null }[]>`
+        SELECT COALESCE(SUM(cost_micro_usd), 0) AS charged,
+               COALESCE(SUM(cost_micro_usd * ${LIST_PRICE_BP} / multiplier_bp), 0) AS list
+          FROM ai_usage`,
+    ]);
+
+    const blank = () => ({ deposited: 0, spent: 0, adjusted: 0, lastAt: null as Date | null });
+    const per = new Map<number, ReturnType<typeof blank>>();
+    const slot = (id: number) => {
+      let v = per.get(id);
+      if (!v) per.set(id, (v = blank()));
+      return v;
+    };
+
+    for (const row of byUserKind) {
+      const v = slot(row.userId);
+      const amount = row._sum.amountMicroUsd ?? 0;
+      if (row.kind === 'topup') v.deposited += amount;
+      // Spends are stored negative; reported positive because "spent -$4" reads
+      // as money coming back.
+      else if (row.kind === 'usage') v.spent += -amount;
+      else v.adjusted += amount;
+      if (row._max.createdAt && (!v.lastAt || row._max.createdAt > v.lastAt)) {
+        v.lastAt = row._max.createdAt;
+      }
+    }
+
+    const calls = new Map(usageByUser.map((u) => [u.userId ?? -1, u]));
+
+    const accounts: AccountSummary[] = users.map((u) => {
+      const v = per.get(u.id) ?? blank();
+      const c = calls.get(u.id);
+      return {
+        id: u.id,
+        email: u.email,
+        role: String(u.role),
+        balanceMicroUsd: u.balanceMicroUsd,
+        depositedMicroUsd: v.deposited,
+        spentMicroUsd: v.spent,
+        adjustedMicroUsd: v.adjusted,
+        generations: c?._count._all ?? 0,
+        // Everything a call cost, whether or not a balance existed to take it
+        // from — which is why this can exceed `spentMicroUsd`.
+        chargedMicroUsd: c?._sum.costMicroUsd ?? 0,
+        lastActivityAt:
+          [v.lastAt, c?._max.createdAt]
+            .filter((d): d is Date => d instanceof Date)
+            .sort((a, b) => b.getTime() - a.getTime())[0]
+            ?.toISOString() ?? null,
+      };
+    });
+
+    const charged = Number(margin[0]?.charged ?? 0);
+    const series = await dailyMoney();
+    const list = Number(margin[0]?.list ?? 0);
+
+    return {
+      accounts,
+      series,
+      totals: {
+        heldMicroUsd: accounts.reduce((n, a) => n + a.balanceMicroUsd, 0),
+        depositedMicroUsd: accounts.reduce((n, a) => n + a.depositedMicroUsd, 0),
+        spentMicroUsd: accounts.reduce((n, a) => n + a.spentMicroUsd, 0),
+        adjustedMicroUsd: accounts.reduce((n, a) => n + a.adjustedMicroUsd, 0),
+        generations: accounts.reduce((n, a) => n + a.generations, 0),
+        chargedMicroUsd: Math.round(charged),
+        vendorCostMicroUsd: Math.round(list),
+        marginMicroUsd: Math.round(charged - list),
+        fundedAccounts: accounts.filter((a) => a.balanceMicroUsd > 0).length,
+      },
+    };
   },
 
   /** Everyone who can be credited, for the manual deposit picker. */
