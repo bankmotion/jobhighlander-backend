@@ -38,7 +38,7 @@ export interface ListJobsParams {
   pageSize: number;
 }
 
-export type PostedFilter = 'all' | 'today' | '3d' | 'custom';
+export type PostedFilter = 'all' | 'today' | '24h' | '3d' | 'custom';
 
 /**
  * Narrow to when the job was posted.
@@ -66,9 +66,18 @@ function postedWhere(params: ListJobsParams): Prisma.JobWhereInput {
     };
   }
 
+  const now = new Date();
+
+  // The one rolling window. Zone-independent by definition — twenty-four hours
+  // back from this instant is the same instant everywhere — so it is the honest
+  // answer to "what is new" regardless of what time it is where the viewer is.
+  if (posted === '24h') {
+    return { postedAt: { gte: new Date(now.getTime() - 24 * 3_600_000) } };
+  }
+
   // Calendar days, counted back from today in the viewer's zone: '3d' is today
   // and the two days before it, not the last 72 hours.
-  const startOfToday = startOfZonedDay(new Date(), zone);
+  const startOfToday = startOfZonedDay(now, zone);
   const gte = posted === 'today' ? startOfToday : addZonedDays(startOfToday, -2, zone);
   return { postedAt: { gte } };
 }

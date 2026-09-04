@@ -30,10 +30,14 @@ const listQuerySchema = z.object({
   discarded: z.enum(['all', 'discarded', 'undiscarded']).default('all'),
   interview: z.enum(['all', 'started', 'notstarted']).default('all'),
   profileId: z.coerce.number().int().positive().optional(),
-  // When the JOB was posted, as opposed to when we scraped it. 'today' and
-  // '3d' are calendar windows in the viewer's zone, not rolling hours — they
-  // sit beside a date picker, so they have to mean the same kind of thing.
-  posted: z.enum(['all', 'today', '3d', 'custom']).default('all'),
+  // When the JOB was posted, as opposed to when we scraped it.
+  //
+  // '24h' is a ROLLING window; 'today' and '3d' are calendar windows in the
+  // viewer's zone. Both kinds are offered because they answer different
+  // questions and neither substitutes for the other: at 01:00 local, 'today' is
+  // an hour long and empty, while '24h' is the thousand-odd jobs posted since
+  // yesterday morning.
+  posted: z.enum(['all', 'today', '24h', '3d', 'custom']).default('all'),
   postedFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   postedTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   tz: z.string().trim().max(64).optional(),
