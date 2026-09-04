@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
-import { jobService } from '../services/job.service';
+import { DuplicateJobError, jobService } from '../services/job.service';
 import { prisma } from '../lib/prisma';
 import { usableProfileWhere } from '../services/profile.service';
 import type { AuthedRequest } from '../middleware/auth.middleware';
@@ -30,6 +30,13 @@ const listQuerySchema = z.object({
   discarded: z.enum(['all', 'discarded', 'undiscarded']).default('all'),
   interview: z.enum(['all', 'started', 'notstarted']).default('all'),
   profileId: z.coerce.number().int().positive().optional(),
+  // When the JOB was posted, as opposed to when we scraped it. 'today' and
+  // '3d' are calendar windows in the viewer's zone, not rolling hours — they
+  // sit beside a date picker, so they have to mean the same kind of thing.
+  posted: z.enum(['all', 'today', '3d', 'custom']).default('all'),
+  postedFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  postedTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  tz: z.string().trim().max(64).optional(),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(20),
 });
@@ -57,6 +64,60 @@ jobRouter.get('/', async (req: AuthedRequest, res: Response, next: NextFunction)
     });
     res.json(result);
   } catch (err) {
+    next(err);
+  }
+});
+
+
+/**
+ * Add a job by hand.
+ *
+ * Open to any signed-in user, not just admins: the person who found a posting
+ * elsewhere is the one who needs it on the list, and the row lands in the same
+ * shared table everyone already reads.
+ *
+ * Registered before '/:id' — Express matches in order, and this is a POST to
+ * the collection so the two cannot collide, but keeping list routes together
+ * is what stops the next one from being added in the wrong place.
+ */
+const manualJobSchema = z.object({
+  title: z.string().trim().min(2).max(512),
+  company: z.string().trim().max(255).optional(),
+  // Long, because this is the text the AI writes the resume against. A one-line
+  // placeholder produces a one-line-quality resume.
+  description: z.string().trim().min(20).max(60_000),
+  jobUrl: z.string().trim().url().max(1024).optional().or(z.literal('')),
+  applyUrl: z.string().trim().url().max(2048).optional().or(z.literal('')),
+  location: z.string().trim().max(255).optional(),
+  jobType: z.string().trim().max(64).optional(),
+  salary: z.string().trim().max(255).optional(),
+  remote: z.boolean().optional(),
+  postedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal('')),
+  tz: z.string().trim().max(64).optional(),
+});
+
+jobRouter.post('/', async (req: AuthedRequest, res: Response, next: NextFunction) => {
+  try {
+    const parsed = manualJobSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid job', details: parsed.error.flatten() });
+    }
+    const { jobUrl, applyUrl, postedOn, ...rest } = parsed.data;
+    const job = await jobService.addManual(req.user!.id, {
+      ...rest,
+      // The schema allows '' so an empty input is not a validation error; the
+      // service wants absence, not an empty string.
+      jobUrl: jobUrl || null,
+      applyUrl: applyUrl || null,
+      postedOn: postedOn || null,
+    });
+    res.status(201).json(job);
+  } catch (err) {
+    if (err instanceof DuplicateJobError) {
+      // 409 with the id, so the client can offer to open the job that already
+      // exists rather than just refusing.
+      return res.status(409).json({ error: 'That job is already on the list', jobId: err.jobId });
+    }
     next(err);
   }
 });

@@ -11,6 +11,17 @@ import {
 import { aiRateService } from './aiRate.service';
 import { billingService } from './billing.service';
 import { logger } from './logger.service';
+import {
+  addZonedDays,
+  endOfZonedDate,
+  resolveZone,
+  startOfZonedDate,
+  startOfZonedDay,
+  startOfZonedHour,
+  zonedDayKey,
+  zonedDaysBetween,
+  zonedHourKey,
+} from '../lib/zone';
 
 export type AiFeature = 'application' | 'job_query' | 'resume' | 'cover_letter';
 
@@ -128,7 +139,6 @@ export const MAX_RANGE_DAYS = 365;
 
 export const MAX_PAGE_SIZE = 200;
 
-const utcDay = (d: Date): string => d.toISOString().slice(0, 10);
 
 const emptyAcc = (): Accumulator => ({
   calls: 0,
@@ -159,6 +169,8 @@ export interface RangeInput {
   /** ISO dates (YYYY-MM-DD), inclusive on both ends. */
   from?: string;
   to?: string;
+  /** The viewer's display zone. Unknown or absent means UTC. */
+  tz?: string;
 }
 
 export type Granularity = 'hour' | 'day';
@@ -173,21 +185,20 @@ interface UsageWindow {
   days: number;
   /** Human range for the page header, e.g. "today" or "1 Sep – 8 Sep". */
   label: string;
+  /** The zone every boundary and bucket key in this window is expressed in. */
+  zone: string;
 }
 
 const HOUR = 3_600_000;
-const DAY = 86_400_000;
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-const topOfHour = (d: Date): Date =>
-  new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours()));
+const shortDate = (d: Date, zone: string): string =>
+  d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: zone });
 
-const startOfUtcDay = (d: Date): Date =>
-  new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-
-const shortDate = (d: Date): string =>
-  d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+/** Local hours elapsed since local midnight, for sizing the "today" window. */
+const hoursIntoDay = (now: Date, zone: string): number =>
+  Math.floor((now.getTime() - startOfZonedDay(now, zone).getTime()) / HOUR);
 
 export class RangeError extends Error {}
 
@@ -200,6 +211,7 @@ export class RangeError extends Error {}
  */
 function usageWindow(input: RangeInput): UsageWindow {
   const now = new Date();
+  const zone = resolveZone(input.tz);
 
   if (input.from || input.to) {
     if (!input.from || !input.to) {
@@ -208,46 +220,52 @@ function usageWindow(input: RangeInput): UsageWindow {
     if (!ISO_DATE.test(input.from) || !ISO_DATE.test(input.to)) {
       throw new RangeError('Dates must be in YYYY-MM-DD form');
     }
-    const start = new Date(`${input.from}T00:00:00.000Z`);
+    // The dates came off a date input, so they name days on the viewer's
+    // calendar, not UTC days that happen to share the label.
+    const start = startOfZonedDate(input.from, zone);
     // Inclusive of the whole final day, so picking one date is a full day
     // rather than a zero-length window.
-    const end = new Date(`${input.to}T23:59:59.999Z`);
+    const end = endOfZonedDate(input.to, zone);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
       throw new RangeError('Invalid dates');
     }
     if (start > end) throw new RangeError('from must be on or before to');
-    const buckets = Math.round((startOfUtcDay(end).getTime() - start.getTime()) / DAY) + 1;
+    const buckets = zonedDaysBetween(start, end, zone);
     if (buckets > MAX_RANGE_DAYS) {
       throw new RangeError(`Range cannot exceed ${MAX_RANGE_DAYS} days`);
     }
     return {
-      start, end, buckets, unit: 'day', days: buckets,
-      label: input.from === input.to ? shortDate(start) : `${shortDate(start)} – ${shortDate(end)}`,
+      start, end, buckets, unit: 'day', days: buckets, zone,
+      label:
+        input.from === input.to
+          ? shortDate(start, zone)
+          : `${shortDate(start, zone)} – ${shortDate(end, zone)}`,
     };
   }
 
   if (input.preset === '24h') {
     // Ends at the top of the current hour plus the partial one in progress, so
     // there are exactly 24 buckets and the newest is the hour you are in.
-    const start = new Date(topOfHour(now).getTime() - 23 * HOUR);
-    return { start, end: now, buckets: 24, unit: 'hour', days: 1, label: 'the last 24 hours' };
+    const start = new Date(startOfZonedHour(now, zone).getTime() - 23 * HOUR);
+    return { start, end: now, buckets: 24, unit: 'hour', days: 1, zone, label: 'the last 24 hours' };
   }
 
   if (input.preset === 'today') {
-    const start = startOfUtcDay(now);
+    const start = startOfZonedDay(now, zone);
     return {
       start, end: now,
-      buckets: now.getUTCHours() + 1,
-      unit: 'hour', days: 1,
+      // Local hours so far. On a spring-forward day this is 23, not 24, which
+      // is exactly how many hours that day has.
+      buckets: hoursIntoDay(now, zone) + 1,
+      unit: 'hour', days: 1, zone,
       label: 'today',
     };
   }
 
   const span = Math.min(Math.max(Math.trunc(input.days ?? 30) || 1, 1), MAX_RANGE_DAYS);
-  const start = startOfUtcDay(now);
-  start.setUTCDate(start.getUTCDate() - (span - 1));
+  const start = addZonedDays(startOfZonedDay(now, zone), -(span - 1), zone);
   return {
-    start, end: now, buckets: span, unit: 'day', days: span,
+    start, end: now, buckets: span, unit: 'day', days: span, zone,
     label: span === 1 ? 'today' : `${span} days`,
   };
 }
@@ -609,21 +627,23 @@ const byCostDesc = (a: UsageBucket, b: UsageBucket): number =>
  * ordering relies on. The label is what a person reads: a bare hour for an
  * hourly range, since the date is already in the header.
  */
-const bucketKey = (d: Date, unit: Granularity): string =>
-  unit === 'hour' ? `${utcDay(d)}T${String(d.getUTCHours()).padStart(2, '0')}` : utcDay(d);
+const bucketKey = (d: Date, unit: Granularity, zone: string): string =>
+  unit === 'hour' ? zonedHourKey(d, zone) : zonedDayKey(d, zone);
 
 const bucketLabel = (key: string, unit: Granularity): string =>
   unit === 'hour' ? `${key.slice(11, 13)}:00` : key;
 
-const stamp = (d: Date, unit: Granularity): string =>
-  unit === 'hour' ? `${utcDay(d)} ${String(d.getUTCHours()).padStart(2, '0')}:00` : utcDay(d);
+const stamp = (d: Date, unit: Granularity, zone: string): string =>
+  unit === 'hour'
+    ? `${zonedDayKey(d, zone)} ${zonedHourKey(d, zone).slice(11, 13)}:00`
+    : zonedDayKey(d, zone);
 
 function aggregate(
   rows: UsageRow[],
   win: UsageWindow,
   multipliers: ProviderMultipliers,
 ): UsageSummary {
-  const { start, end, buckets, unit } = win;
+  const { start, end, buckets, unit, zone } = win;
   const day: BucketMap = new Map();
   const provider: BucketMap = new Map();
   const model: BucketMap = new Map();
@@ -635,13 +655,17 @@ function aggregate(
   // Zero-fill every bucket up front. A quiet hour or day is information, and a
   // chart that omits it silently rescales the timeline.
   for (let i = 0; i < buckets; i++) {
-    const d = new Date(start.getTime() + i * (unit === 'hour' ? HOUR : DAY));
-    const key = bucketKey(d, unit);
+    // Days step by local days — a fixed 24h stride drifts an hour across a
+    // daylight-saving change and starts zero-filling the wrong dates. Hours
+    // step by real hours, since that is what an hour is; on a fall-back night
+    // two of them share one local key and merge, which is what the clock did.
+    const d = unit === 'hour' ? new Date(start.getTime() + i * HOUR) : addZonedDays(start, i, zone);
+    const key = bucketKey(d, unit, zone);
     upsert(day, key, { label: bucketLabel(key, unit) });
   }
 
   for (const r of rows) {
-    const key = bucketKey(r.createdAt, unit);
+    const key = bucketKey(r.createdAt, unit, zone);
     const targets = [
       totals,
       upsert(day, key, { label: bucketLabel(key, unit) }),
@@ -657,8 +681,8 @@ function aggregate(
   }
 
   return {
-    from: stamp(start, unit),
-    to: stamp(end, unit),
+    from: stamp(start, unit, zone),
+    to: stamp(end, unit, zone),
     days: win.days,
     granularity: unit,
     rangeLabel: win.label,

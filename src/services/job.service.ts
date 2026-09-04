@@ -1,5 +1,8 @@
 import { Prisma, JobSite } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import { addZonedDays, endOfZonedDate, resolveZone, startOfZonedDate, startOfZonedDay } from '../lib/zone';
+import { randomUUID } from 'node:crypto';
+import { fingerprint } from '../lib/fingerprint';
 
 const JOB_SITES = new Set<string>(Object.values(JobSite));
 
@@ -25,11 +28,145 @@ export interface ListJobsParams {
   discarded?: DiscardedFilter;
   interview?: InterviewFilter;
   profileId?: number;
+  posted?: PostedFilter;
+  /** ISO dates (YYYY-MM-DD), inclusive, interpreted in `tz`. */
+  postedFrom?: string;
+  postedTo?: string;
+  /** The viewer's display zone. Unknown or absent means UTC. */
+  tz?: string;
   page: number;
   pageSize: number;
 }
 
+export type PostedFilter = 'all' | 'today' | '3d' | 'custom';
+
+/**
+ * Narrow to when the job was posted.
+ *
+ * Jobs with no `postedAt` are EXCLUDED by any active window. About 5% of rows
+ * have no posting date — almost all of them Glassdoor — and there is no honest
+ * way to answer "was this posted today" for them. Including them would pad
+ * every window with jobs that might be months old; the alternative, saying so
+ * in the UI, is what the filter's caption does.
+ */
+function postedWhere(params: ListJobsParams): Prisma.JobWhereInput {
+  const { posted, postedFrom, postedTo, tz } = params;
+  if (!posted || posted === 'all') return {};
+  const zone = resolveZone(tz);
+
+  if (posted === 'custom') {
+    // A one-sided range is still a range: an open end means "everything since"
+    // or "everything until", which is a reasonable thing to ask for.
+    if (!postedFrom && !postedTo) return {};
+    return {
+      postedAt: {
+        ...(postedFrom ? { gte: startOfZonedDate(postedFrom, zone) } : {}),
+        ...(postedTo ? { lte: endOfZonedDate(postedTo, zone) } : {}),
+      },
+    };
+  }
+
+  // Calendar days, counted back from today in the viewer's zone: '3d' is today
+  // and the two days before it, not the last 72 hours.
+  const startOfToday = startOfZonedDay(new Date(), zone);
+  const gte = posted === 'today' ? startOfToday : addZonedDays(startOfToday, -2, zone);
+  return { postedAt: { gte } };
+}
+
+
+export interface ManualJobInput {
+  title: string;
+  company?: string | null;
+  description: string;
+  jobUrl?: string | null;
+  applyUrl?: string | null;
+  location?: string | null;
+  jobType?: string | null;
+  salary?: string | null;
+  remote?: boolean;
+  /** ISO date (YYYY-MM-DD) in `tz`; defaults to now. */
+  postedOn?: string | null;
+  tz?: string;
+}
+
+/** Thrown when the posting is already in the table, with the id of the row. */
+export class DuplicateJobError extends Error {
+  constructor(readonly jobId: number) {
+    super('That job is already on the list');
+  }
+}
+
 export const jobService = {
+  /**
+   * Add a job by hand, for a posting that is not on any site we scrape.
+   *
+   * Stored as an ordinary row with `site = 'other'`, so it is filtered, paged,
+   * applied to and generated against by exactly the same code as a scraped one.
+   * There is no per-profile scoping on `jobs` and none is added here: a job the
+   * whole team can see is the point of putting it in the shared table.
+   *
+   * Fingerprinted like every other row, so adding the same posting twice — the
+   * predictable outcome of two people working the same lead — is caught rather
+   * than duplicated.
+   */
+  async addManual(userId: number, input: ManualJobInput) {
+    const site = 'other' as const;
+    const company = input.company?.trim() || null;
+    const title = input.title.trim();
+    const description = input.description.trim();
+
+    const fp = fingerprint({ site, company, title, description });
+
+    // Checked before inserting so the caller gets the existing job to link to,
+    // rather than a unique-constraint error with nothing useful in it.
+    const existing = await prisma.job.findFirst({
+      where: { site, fingerprint: fp },
+      select: { id: true },
+    });
+    if (existing) throw new DuplicateJobError(existing.id);
+
+    const zone = resolveZone(input.tz);
+    // A date with no time means the start of that day WHERE THE USER IS, not
+    // 00:00 UTC — otherwise "posted today" can land on yesterday for them.
+    const postedAt = input.postedOn ? startOfZonedDate(input.postedOn, zone) : new Date();
+
+    try {
+      return await prisma.job.create({
+        data: {
+          site,
+          // Unique per row and never shown. `site_siteJobId` is a unique key, so
+          // this cannot be a constant, and there is no upstream id to use.
+          siteJobId: `manual-${randomUUID()}`,
+          title,
+          description,
+          company,
+          // Every scraped row has a URL and parts of the UI link to it, so an
+          // empty string is stored rather than null to keep the column's shape.
+          jobUrl: input.jobUrl?.trim() || '',
+          applyUrl: input.applyUrl?.trim() || null,
+          location: input.location?.trim() || null,
+          jobType: input.jobType?.trim() || null,
+          salary: input.salary?.trim() || null,
+          remote: input.remote ?? false,
+          postedAt,
+          fingerprint: fp,
+          createdById: userId,
+        },
+      });
+    } catch (err) {
+      // Lost a race with another submission of the same posting between the
+      // check above and this insert.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        const dupe = await prisma.job.findFirst({
+          where: { site, fingerprint: fp },
+          select: { id: true },
+        });
+        if (dupe) throw new DuplicateJobError(dupe.id);
+      }
+      throw err;
+    }
+  },
+
   async list(params: ListJobsParams) {
     const { sites, remote, location, q, company, title, description, applied, discarded, interview, profileId, page, pageSize } =
       params;
@@ -60,6 +197,7 @@ export const jobService = {
           : { interviews: { none: { profileId } } };
 
     const where: Prisma.JobWhereInput = {
+      ...postedWhere(params),
       ...(validSites.length ? { site: { in: validSites } } : {}),
       ...(remote ? { remote: true } : {}),
       ...(location ? { location: { contains: location } } : {}),

@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma';
 import { usableProfileWhere } from './profile.service';
+import { addZonedDays, zonedDayKey, zonedDaysBetween } from '../lib/zone';
 
 export type FunnelStage = 'applied' | 'interviewing' | 'offer' | 'accepted';
 
@@ -154,14 +155,22 @@ const OUTCOME_LABELS: Record<string, string> = {
 
 const OFFER_STATUSES = new Set(['offer', 'accepted']);
 
-const dayKey = (d: Date): string => d.toISOString().slice(0, 10);
+// The zone travels WITH the window, so a caller cannot pass one and forget the
+// other and end up bucketing a local range by UTC days.
+export interface StatsWindow {
+  from: Date;
+  to: Date;
+  zone: string;
+}
+
+const dayKey = (d: Date, zone: string): string => zonedDayKey(d, zone);
 const pct = (part: number, whole: number): number =>
   whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0;
 
 export const statsService = {
   async bidPerformance(
     userId: number,
-    window: { from: Date; to: Date },
+    window: StatsWindow,
     opts: {
       profileId?: number;
       // Whose bids to count. Undefined = the caller's own, 'all' = every member
@@ -174,9 +183,13 @@ export const statsService = {
     const { profileId, bidder } = opts;
     const allUsers = bidder === 'all';
     const bidderId = typeof bidder === 'number' ? bidder : undefined;
-    const { from, to } = window;
-    // Inclusive day count, so a same-day range is one bucket rather than none.
-    const days = Math.max(0, Math.round((to.getTime() - from.getTime()) / 86400000));
+    const { from, to, zone } = window;
+    // Counted in LOCAL days, not elapsed milliseconds. Dividing by 86,400,000
+    // and rounding turns a 21-hour "today" — which is what today is in
+    // Pacific/Kiritimati at 07:00 UTC — into 2, and draws a bucket for a day
+    // that has not started. This is the number of steps AFTER the first, so a
+    // same-day range is 0 and yields one bucket.
+    const days = zonedDaysBetween(from, to, zone) - 1;
     // Profile access is the same rule in both scopes — `allUsers` widens WHO
     // is counted, never WHICH profiles are visible.
     // Undefined bidder means "me"; a named bidder narrows to them; 'all' drops
@@ -204,7 +217,7 @@ export const statsService = {
     );
 
     if (profileIds.length === 0) {
-      return emptyResult(days, from, to);
+      return emptyResult(days, from, to, zone);
     }
 
     const [applications, myBidsEver, interviews, discarded, memberRows] = await Promise.all([
@@ -299,9 +312,14 @@ export const statsService = {
     const byUser = new Map<number, { email: string; applications: number; interviews: number; offers: number }>();
 
     for (let i = 0; i <= days; i++) {
-      const at = new Date(from.getTime() + i * 86400000);
-      if (at.getTime() > to.getTime() + 86400000) break;
-      daily.set(dayKey(at), { applications: 0, interviews: 0 });
+      // Stepped in LOCAL days: a fixed 86,400,000ms stride drifts by an hour
+      // across a daylight-saving change and starts filing rows under the
+      // neighbouring day for the rest of the range.
+      const at = addZonedDays(from, i, zone);
+      // Exact, not `to` plus a day: the old slack was harmless while the count
+      // was UTC-derived and is a second way to admit a future bucket now.
+      if (at.getTime() > to.getTime()) break;
+      daily.set(dayKey(at, zone), { applications: 0, interviews: 0 });
     }
 
     for (const a of applications) {
@@ -312,7 +330,7 @@ export const statsService = {
       if (iv?.status === 'accepted') accepted++;
       if (iv?.status === 'rejected') rejected++;
 
-      const d = daily.get(dayKey(a.appliedAt));
+      const d = daily.get(dayKey(a.appliedAt, zone));
       if (d) {
         d.applications++;
         if (won) d.interviews++;
@@ -417,12 +435,17 @@ export const statsService = {
   // has to appear with a zero — an aggregate would simply omit them, which is
   // the opposite of what an oversight view is for.
   async teamBidPerformance(
-    window: { from: Date; to: Date },
+    window: StatsWindow,
     opts: { profileId?: number; bidder?: number } = {},
   ): Promise<TeamBidPerformance> {
-    const { from, to } = window;
+    const { from, to, zone } = window;
     const { profileId, bidder } = opts;
-    const days = Math.max(0, Math.round((to.getTime() - from.getTime()) / 86400000));
+// Counted in LOCAL days, not elapsed milliseconds. Dividing by 86,400,000
+    // and rounding turns a 21-hour "today" — which is what today is in
+    // Pacific/Kiritimati at 07:00 UTC — into 2, and draws a bucket for a day
+    // that has not started. This is the number of steps AFTER the first, so a
+    // same-day range is 0 and yields one bucket.
+    const days = zonedDaysBetween(from, to, zone) - 1;
 
     // Narrowing to one profile is applied to EVERY query, not just the profile
     // list. Filtering only the profiles would leave the totals, the donut and
@@ -522,9 +545,14 @@ export const statsService = {
     // than closing the gap and implying activity that did not happen.
     const daily = new Map<string, { applications: number; interviews: number }>();
     for (let i = 0; i <= days; i++) {
-      const at = new Date(from.getTime() + i * 86400000);
-      if (at.getTime() > to.getTime() + 86400000) break;
-      daily.set(dayKey(at), { applications: 0, interviews: 0 });
+      // Stepped in LOCAL days: a fixed 86,400,000ms stride drifts by an hour
+      // across a daylight-saving change and starts filing rows under the
+      // neighbouring day for the rest of the range.
+      const at = addZonedDays(from, i, zone);
+      // Exact, not `to` plus a day: the old slack was harmless while the count
+      // was UTC-derived and is a second way to admit a future bucket now.
+      if (at.getTime() > to.getTime()) break;
+      daily.set(dayKey(at, zone), { applications: 0, interviews: 0 });
     }
     const bySiteAll = new Map<string, { applications: number; interviews: number }>();
 
@@ -607,7 +635,7 @@ export const statsService = {
         if (label) pCompanies.add(label.toLowerCase());
         if (!pLast || a.appliedAt > pLast) pLast = a.appliedAt;
 
-        const d = daily.get(dayKey(a.appliedAt));
+        const d = daily.get(dayKey(a.appliedAt, zone));
         if (d) { d.applications++; if (iv) d.interviews++; }
 
         const site = (a.jobId != null ? siteOf.get(a.jobId) : undefined) ?? 'unknown';
@@ -778,10 +806,10 @@ function dedupeUsers(
     .sort((a, b) => a.email.localeCompare(b.email));
 }
 
-function emptyResult(days: number, from: Date, to: Date): BidPerformance {
+function emptyResult(days: number, from: Date, to: Date, zone: string): BidPerformance {
   const daily: BidPerformance['daily'] = [];
   for (let i = 0; i <= days; i++) {
-    daily.push({ date: dayKey(new Date(from.getTime() + i * 86400000)), applications: 0, interviews: 0 });
+    daily.push({ date: dayKey(addZonedDays(from, i, zone), zone), applications: 0, interviews: 0 });
   }
   return {
     range: { days, from: from.toISOString(), to: to.toISOString() },

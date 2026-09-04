@@ -1,6 +1,7 @@
 import { Router, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
-import { statsService } from '../services/stats.service';
+import { statsService, type StatsWindow } from '../services/stats.service';
+import { endOfZonedDate, resolveZone, startOfZonedDate, startOfZonedDay } from '../lib/zone';
 import { requireAuth, requireRole, type AuthedRequest } from '../middleware/auth.middleware';
 
 export const statsRouter = Router();
@@ -24,35 +25,42 @@ const query = z.object({
   // Which bidder's stats to show. Absent = the caller's own, 'all' = everyone
   // with access to the in-scope profiles, a number = that teammate.
   bidder: z.union([z.literal('all'), z.coerce.number().int().positive()]).optional(),
+  // The viewer's display zone. Absent or unknown falls back to UTC, which is
+  // what this did before zones were threaded through at all.
+  tz: z.string().trim().max(64).optional(),
 });
 
-function resolveWindow(q: z.infer<typeof query>): { from: Date; to: Date } | { error: string } {
+function resolveWindow(q: z.infer<typeof query>): StatsWindow | { error: string } {
+  const zone = resolveZone(q.tz);
+
   if (q.from || q.to) {
     if (!q.from || !q.to) return { error: 'Both from and to are required for a custom range' };
-    const from = new Date(`${q.from}T00:00:00.000Z`);
-    const to = new Date(`${q.to}T23:59:59.999Z`);
+    // The dates a person picks are dates in THEIR calendar, so they bound the
+    // local day, not the UTC one. Picking today used to return a window that
+    // started an hour late or ended five hours early depending on the zone.
+    const from = startOfZonedDate(q.from, zone);
+    const to = endOfZonedDate(q.to, zone);
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return { error: 'Invalid dates' };
     if (from > to) return { error: 'from must be on or before to' };
     if (to.getTime() - from.getTime() > MAX_SPAN_DAYS * DAY) {
       return { error: `Range cannot exceed ${MAX_SPAN_DAYS} days` };
     }
-    return { from, to };
+    return { from, to, zone };
   }
   const to = new Date();
 
   if (q.preset === 'today') {
-    // Midnight UTC to now. Distinct from the rolling window below: at 09:00
+    // Local midnight to now. Distinct from the rolling window below: at 09:00
     // this is nine hours of data, not twenty-four.
-    return {
-      from: new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate())),
-      to,
-    };
+    return { from: startOfZonedDay(to, zone), to, zone };
   }
 
   // 24 hours by default: the question these pages answer is "how is today
   // going", and a 90-day window buried that in a quarter of history.
   const days = q.preset === '24h' ? 1 : (q.days ?? 1);
-  return { from: new Date(to.getTime() - days * DAY), to };
+  // Rolling window: a fixed span backwards from now, so it is zone-independent
+  // by definition. The zone still rides along because the BUCKETS are local.
+  return { from: new Date(to.getTime() - days * DAY), to, zone };
 }
 
 // Every profile in the system with its members, for oversight. Super-admin

@@ -30,6 +30,9 @@ const daysSchema = z.object({
   preset: z.enum(['today', '24h']).optional(),
   from: isoDate.optional(),
   to: isoDate.optional(),
+  // The viewer's display zone, so "today" means their today. Unknown or
+  // absent falls back to UTC, which is what this did before.
+  tz: z.string().trim().max(64).optional(),
 });
 
 const toRange = (q: z.infer<typeof daysSchema>): RangeInput => ({
@@ -37,6 +40,7 @@ const toRange = (q: z.infer<typeof daysSchema>): RangeInput => ({
   preset: q.preset,
   from: q.from,
   to: q.to,
+  tz: q.tz,
 });
 
 /**

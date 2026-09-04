@@ -1,41 +1,12 @@
-import crypto from 'node:crypto';
 import { prisma } from '../lib/prisma';
 import { logger } from '../services/logger.service';
+// Moved to lib/ so services can compute a fingerprint without importing this
+// script, which runs a dedupe pass on import.
+import { fingerprint, SEP } from '../lib/fingerprint';
 
 const KEEP = 'oldest';
 
-function norm(s: string | null | undefined): string {
-  return (s ?? '')
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-}
-
-const SEP = '|';
-
-// Location is deliberately absent — see the matching note on `_fingerprint`
-// in job-seeking/scraper/db.py. One requisition broadcast to every metro was
-// entering the table once per city.
-//
-// MUST stay in lockstep with that function: the two write the same column, so
-// a part added or removed here has to be added or removed there in the same
-// change, or the scraper and this script will disagree about job identity.
-export function fingerprint(job: {
-  site: string;
-  company: string | null;
-  title: string;
-  description: string;
-}): string {
-  const parts = [
-    job.site,
-    norm(job.company),
-    norm(job.title),
-    norm(job.description).slice(0, 100),
-  ];
-  return crypto.createHash('sha1').update(parts.join(SEP)).digest('hex');
-}
+export { fingerprint };
 
 async function main() {
   const apply = process.argv.includes('--apply');

@@ -43,6 +43,12 @@ model Job {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  /// Who added it, for `site = other` rows. Null for everything scraped, which
+  /// nobody added. The job itself stays visible to every profile either way —
+  /// this records provenance, it does not scope access.
+  createdById Int?  @map("created_by_id")
+  createdBy   User? @relation("JobCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
   resumes      Resume[]
   applications JobApplication[]
   discards     JobDiscard[]
@@ -56,6 +62,7 @@ model Job {
   /// not participate rather than colliding with each other.
   @@unique([site, fingerprint], name: "site_fingerprint")
   @@index([site])
+  @@index([createdById])
   @@map("jobs")
 }
 
@@ -69,6 +76,10 @@ enum JobSite {
   jobicy
   themuse
   linkedin
+
+  /// Added by hand through the app, for a posting that is not on any site we
+  /// scrape. Not a scraper target — nothing writes it except `jobService.addManual`.
+  other
 }
 
 /// The scrapers' staging table. Structurally a copy of `jobs`, written by
@@ -195,6 +206,10 @@ model User {
   /// Interview timelines this user opened, same reasoning as the two above:
   /// a shared profile has several users, so the row records WHO started it.
   interviewsOpened Interview[] @relation("InterviewOpenedBy")
+
+  /// Jobs this account added by hand. Cleared rather than cascaded when the
+  /// account goes: the job outlives whoever entered it.
+  jobsCreated Job[] @relation("JobCreatedBy")
 
   /// Questions this user asked the model about a posting.
   aiQueriesAsked JobAiQuery[] @relation("AiQueryAskedBy")
