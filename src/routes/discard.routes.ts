@@ -54,6 +54,21 @@ const statusQuery = z.object({
 });
 
 discardRouter.get(
+  '/company-history',
+  requireAuth,
+  async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const parsed = statusQuery.safeParse(req.query);
+      if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
+      const { profileId, jobIds } = parsed.data;
+      res.json(await discardService.companyHistoryFor(jobIds, profileId, req.user!.id));
+    } catch (err) {
+      failure(err, res, next);
+    }
+  },
+);
+
+discardRouter.get(
   '/status',
   requireAuth,
   async (req: AuthedRequest, res: Response, next: NextFunction) => {

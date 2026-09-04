@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma';
 import { usableProfileWhere } from './profile.service';
+import { buildCompanyHistory } from '../lib/company-history';
 
 export interface AppliedStatus {
   jobId: number;
@@ -146,9 +147,6 @@ export const applicationService = {
   ): Promise<CompanyHistoryMap> {
     if (jobIds.length === 0) return {};
 
-    const norm = (v: string | null | undefined): string =>
-      (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-
     const [jobs, applications] = await Promise.all([
       prisma.job.findMany({
         where: { id: { in: jobIds } },
@@ -160,35 +158,22 @@ export const applicationService = {
         orderBy: { appliedAt: 'desc' },
       }),
     ]);
-    if (applications.length === 0) return {};
 
-    // Newest first above, so the first entry seen for a company is the one to
-    // show and the rest only contribute to the count.
-    const byCompany = new Map<string, { rows: typeof applications; }>();
-    for (const a of applications) {
-      const key = norm(a.jobCompany);
-      if (!key) continue;
-      const bucket = byCompany.get(key);
-      if (bucket) bucket.rows.push(a);
-      else byCompany.set(key, { rows: [a] });
-    }
+    const built = buildCompanyHistory(
+      jobs,
+      applications.map((a) => ({ ...a, at: a.appliedAt })),
+    );
 
+    // Renamed on the way out: the public shape says `appliedAt`, and the
+    // discard endpoint says `discardedAt`, so neither reads as the other.
     const out: CompanyHistoryMap = {};
-    for (const job of jobs) {
-      const key = norm(job.company);
-      if (!key) continue;
-      const bucket = byCompany.get(key);
-      if (!bucket) continue;
-      // Exclude this very posting, then take the most recent of what is left.
-      const others = bucket.rows.filter((r) => r.jobId !== job.id);
-      const latest = others[0];
-      if (!latest) continue;
-      out[job.id] = {
-        company: job.company ?? latest.jobCompany ?? '',
-        appliedAt: latest.appliedAt,
-        jobTitle: latest.jobTitle,
-        jobId: latest.jobId,
-        count: others.length,
+    for (const [jobId, e] of Object.entries(built)) {
+      out[Number(jobId)] = {
+        company: e.company,
+        appliedAt: e.at,
+        jobTitle: e.jobTitle,
+        jobId: e.jobId,
+        count: e.count,
       };
     }
     return out;

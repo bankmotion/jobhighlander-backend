@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma';
 import { usableProfileWhere } from './profile.service';
+import { buildCompanyHistory } from '../lib/company-history';
 
 export interface DiscardStatus {
   jobId: number;
@@ -8,6 +9,24 @@ export interface DiscardStatus {
 }
 
 export type DiscardStatusMap = Record<number, DiscardStatus>;
+
+/**
+ * A previous dismissal at the same company.
+ *
+ * Worth surfacing for the same reason the applied version is: it is a judgement
+ * this profile already made about this employer, and it is easy to forget you
+ * made it. It is a REMINDER, never a block — the posting stays in the list and
+ * stays actionable.
+ */
+export interface DiscardCompanyHistory {
+  company: string;
+  discardedAt: Date;
+  jobTitle: string;
+  jobId: number | null;
+  count: number;
+}
+
+export type DiscardCompanyHistoryMap = Record<number, DiscardCompanyHistory>;
 
 export class DiscardError extends Error {
   constructor(
@@ -87,6 +106,44 @@ export const discardService = {
         jobId: r.jobId,
         discardedAt: r.discardedAt,
         discardedBy: r.discardedBy.email,
+      };
+    }
+    return out;
+  },
+
+  async companyHistoryFor(
+    jobIds: number[],
+    profileId: number,
+    userId: number,
+  ): Promise<DiscardCompanyHistoryMap> {
+    if (jobIds.length === 0) return {};
+
+    const [jobs, discards] = await Promise.all([
+      prisma.job.findMany({
+        where: { id: { in: jobIds } },
+        select: { id: true, company: true },
+      }),
+      prisma.jobDiscard.findMany({
+        where: { profileId, profile: usableProfileWhere(userId), NOT: { jobCompany: null } },
+        select: { jobId: true, jobCompany: true, jobTitle: true, discardedAt: true },
+        // Newest first: the builder shows the first entry it sees per company.
+        orderBy: { discardedAt: 'desc' },
+      }),
+    ]);
+
+    const built = buildCompanyHistory(
+      jobs,
+      discards.map((d) => ({ ...d, at: d.discardedAt })),
+    );
+
+    const out: DiscardCompanyHistoryMap = {};
+    for (const [jobId, e] of Object.entries(built)) {
+      out[Number(jobId)] = {
+        company: e.company,
+        discardedAt: e.at,
+        jobTitle: e.jobTitle,
+        jobId: e.jobId,
+        count: e.count,
       };
     }
     return out;
