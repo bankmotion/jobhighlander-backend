@@ -47,7 +47,7 @@ async function main() {
   // How often does apply_url stay on the same host as job_url? That is the
   // proportion of postings that would read "Easy apply".
   console.log('\nsame-host share (apply_url vs job_url):');
-  for (const [site, e] of [...bySite.entries()].sort((a, b) => b[1].n - a[1].n)) {
+  for (const [site] of [...bySite.entries()].sort((a, b) => b[1].n - a[1].n)) {
     const subset = rows.filter((r) => r.site === site);
     const withApply = subset.filter((r) => r.applyUrl);
     const same = withApply.filter((r) => host(r.applyUrl) === host(r.jobUrl)).length;
