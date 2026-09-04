@@ -76,6 +76,7 @@ enum JobSite {
   jobicy
   themuse
   linkedin
+  dice
 
   /// Added by hand through the app, for a posting that is not on any site we
   /// scrape. Not a scraper target — nothing writes it except `jobService.addManual`.
@@ -134,6 +135,7 @@ enum JobSiteTemp {
   jobicy
   themuse
   linkedin
+  dice
 }
 
 /// One scraper run — logged by the Python scrapers so super-admins can see when
