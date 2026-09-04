@@ -325,8 +325,19 @@ export const jobService = {
         orderBy: { location: 'asc' },
       }),
     ]);
+    const present = sites.map((s) => s.site);
+
+    // Every other source appears only once it has rows, which is right: a
+    // scraper we do not run should not be offerable. 'other' is the exception,
+    // because it is the one source the USER creates. Deriving it from the data
+    // makes it a chicken-and-egg problem — you cannot filter to manually added
+    // jobs until one exists, which is exactly when you want to check that
+    // adding one worked. It also stops the option appearing and vanishing as
+    // the last manual job is added or deleted.
+    const withOther: JobSite[] = present.includes('other') ? present : [...present, 'other'];
+
     return {
-      sites: sites.map((s) => s.site),
+      sites: withOther,
       locations: locations.map((l) => l.location).filter((l): l is string => Boolean(l)),
     };
   },
