@@ -56,10 +56,7 @@ async function main() {
       `  ${site.padEnd(15)} ${String(same).padStart(6)}/${String(withApply.length).padEnd(6)} same-host   ${noApply} have no apply_url`,
     );
   }
-  void e0;
 }
-
-const e0 = null;
 
 main()
   .then(() => process.exit(0))
