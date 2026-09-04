@@ -25,6 +25,7 @@ export interface ListJobsParams {
   title?: string;
   description?: string;
   applied?: AppliedFilter;
+  othersApplied?: OthersAppliedFilter;
   discarded?: DiscardedFilter;
   interview?: InterviewFilter;
   profileId?: number;
@@ -39,6 +40,32 @@ export interface ListJobsParams {
 }
 
 export type PostedFilter = 'all' | 'today' | '24h' | '3d' | 'custom';
+
+/**
+ * Narrow by whether SOMEONE ELSE has already applied.
+ *
+ * Distinct from `applied`, which is about the profile you are viewing as. This
+ * one is about the rest of the board: on a shared list the useful question
+ * before spending a bid is "has another candidate already gone in on this?".
+ *
+ * "Someone else" excludes the profile being viewed as, so a posting only you
+ * have applied to counts as `none` rather than `others`. Without a profile
+ * selected there is nobody to exclude, so it means "anyone at all".
+ */
+export type OthersAppliedFilter = 'all' | 'others' | 'none';
+
+function othersAppliedWhere(params: ListJobsParams): Prisma.JobWhereInput {
+  const { othersApplied, profileId } = params;
+  if (!othersApplied || othersApplied === 'all') return {};
+  // `profileId ? { not: profileId } : undefined` is what makes this "someone
+  // ELSE": with a profile selected we ignore that profile's own application.
+  const byAnotherProfile: Prisma.JobApplicationWhereInput = profileId
+    ? { profileId: { not: profileId } }
+    : {};
+  return othersApplied === 'others'
+    ? { applications: { some: byAnotherProfile } }
+    : { applications: { none: byAnotherProfile } };
+}
 
 /**
  * Narrow to when the job was posted.
@@ -214,6 +241,7 @@ export const jobService = {
       ...(title ? { title: { contains: title } } : {}),
       ...(description ? { description: { contains: description } } : {}),
       ...appliedWhere,
+      ...othersAppliedWhere(params),
       ...discardedWhere,
       ...interviewWhere,
       ...(q
@@ -227,13 +255,19 @@ export const jobService = {
         : {}),
     };
 
-    const [total, items, latest] = await Promise.all([
+    const [total, rows, latest] = await Promise.all([
       prisma.job.count({ where }),
       prisma.job.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
+        // How many profiles have applied to each posting, counted across ALL
+        // profiles rather than the one being viewed as. That is the useful
+        // signal on a shared board: "somebody already went in on this one".
+        // The per-viewer "did I apply" answer is separate and already comes
+        // from the applied provider.
+        include: { _count: { select: { applications: true } } },
       }),
       // The newest id matching these filters, independent of the page being
       // read. Page 2's highest id is not the newest job, so polling for new
@@ -241,6 +275,13 @@ export const jobService = {
       // happens to be.
       prisma.job.findFirst({ where, orderBy: { id: 'desc' }, select: { id: true } }),
     ]);
+
+    // Flatten Prisma's `_count` into a plain field so the API shape stays a
+    // list of jobs rather than leaking the ORM's relation-count envelope.
+    const items = rows.map(({ _count, ...job }) => ({
+      ...job,
+      appliedCount: _count.applications,
+    }));
 
     return {
       items,
@@ -296,6 +337,7 @@ export const jobService = {
       ...(title ? { title: { contains: title } } : {}),
       ...(description ? { description: { contains: description } } : {}),
         ...appliedWhere,
+        ...othersAppliedWhere(params),
         ...discardedWhere,
         ...interviewWhere,
         ...(q
@@ -312,7 +354,16 @@ export const jobService = {
   },
 
   async getById(id: number) {
-    return prisma.job.findUnique({ where: { id } });
+    // Carries `appliedCount` for the same reason list() does: the standalone
+    // job page shows the same badge row as the card, and a badge that appears
+    // in the list then disappears when you open the posting reads as a bug.
+    const row = await prisma.job.findUnique({
+      where: { id },
+      include: { _count: { select: { applications: true } } },
+    });
+    if (!row) return row;
+    const { _count, ...job } = row;
+    return { ...job, appliedCount: _count.applications };
   },
 
   async filters() {
