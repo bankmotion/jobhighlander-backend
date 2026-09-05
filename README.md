@@ -31,3 +31,6 @@ npm run dev                   # start on http://localhost:4000
 - `npm run build` / `npm start` — compile to `dist/` and run
 - `npm run prisma:studio` — browse the DB
 - `npm run typecheck` — type-check without emitting
+
+
+<!-- Security scan triggered at 2026-09-05 07:52:24 -->
