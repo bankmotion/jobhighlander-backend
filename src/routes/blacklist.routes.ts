@@ -26,8 +26,8 @@ const listQuery = z.object({
 
 /**
  * `scope` is either the literal 'all' or a list of profile ids, mirroring the
- * picker: one company can be blacklisted for everyone or for named profiles in
- * a single call.
+ * picker. 'all' means every profile the CALLER can use — owned plus shared —
+ * and the service expands it into one row each; it is not a system-wide rule.
  */
 const scopeSchema = z.union([z.literal('all'), z.array(z.coerce.number().int().positive()).min(1)]);
 
@@ -39,9 +39,8 @@ const createBody = z.object({
 const updateBody = z
   .object({
     company: z.string().trim().min(1).max(255).optional(),
-    // null moves the entry to the "all" scope; a number moves it to that
-    // profile. Absent leaves the scope alone.
-    profileId: z.union([z.coerce.number().int().positive(), z.null()]).optional(),
+    // Moves the entry to that profile. Absent leaves it where it is.
+    profileId: z.coerce.number().int().positive().optional(),
   })
   .refine((b) => b.company !== undefined || b.profileId !== undefined, {
     message: 'Nothing to update',

@@ -290,9 +290,9 @@ export const jobService = {
     const items = rows.map(({ _count, ...job }) => ({
       ...job,
       appliedCount: _count.applications,
-      // null when the employer is not blacklisted; 'all' or 'profile' says
-      // WHICH list caught it, so the badge can be honest about scope.
-      blacklisted: (job.company ? (flags.get(companyKey(job.company)) ?? null) : null),
+      // Blacklisted for the profile being viewed as. Every entry belongs to a
+      // profile, so with none selected nothing is flagged.
+      blacklisted: Boolean(job.company && flags.has(companyKey(job.company))),
     }));
 
     return {

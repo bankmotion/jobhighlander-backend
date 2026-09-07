@@ -370,9 +370,11 @@ enum Role {
 /// in the list and stays actionable, because "we don't bid this employer" is
 /// advice to the person reading, not a reason to hide work from them.
 ///
-/// `profileId` null means EVERY profile — the "All" scope in the UI. MySQL
-/// treats NULLs as distinct, so a unique index cannot enforce one-global-entry
-/// per company; blacklistService does that check instead.
+/// ALWAYS bound to one profile. "All profiles" in the UI means "every profile I
+/// can use" — the ones I own plus the ones shared with me — and is expanded at
+/// creation into one row each. It is deliberately NOT a system-wide rule: a
+/// blacklist added from profiles you can see must not flag jobs for people who
+/// never agreed to it, and an entry with no owner is one anybody could delete.
 model CompanyBlacklist {
   id Int @id @default(autoincrement())
 
@@ -385,9 +387,8 @@ model CompanyBlacklist {
   /// out "Ladder" the employer.
   companyKey String @map("company_key") @db.VarChar(255)
 
-  /// Null = applies to every profile.
-  profileId Int?     @map("profile_id")
-  profile   Profile? @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profileId Int     @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   /// Who added it — shown in the list so a shared profile can see whose call
   /// this was.
@@ -397,9 +398,12 @@ model CompanyBlacklist {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  /// Lookups are always "these companies, for this profile or globally".
+  /// Adding a company twice for the same profile is a no-op the DATABASE
+  /// refuses. It could not before: the scope was nullable and MySQL treats
+  /// NULLs as distinct, so the duplicate check had to live in the service.
+  @@unique([profileId, companyKey])
+  /// Lookups are always "these companies, for these profiles".
   @@index([companyKey])
-  @@index([profileId])
   @@map("company_blacklist")
 }
 
