@@ -218,6 +218,9 @@ model User {
   /// Questions this user asked the model about a posting.
   aiQueriesAsked JobAiQuery[] @relation("AiQueryAskedBy")
 
+  /// Company-blacklist entries this user added.
+  blacklistEntries CompanyBlacklist[] @relation("BlacklistCreatedBy")
+
   /// Prompts this super admin last edited.
   promptsEdited Prompt[]
 
@@ -359,6 +362,47 @@ enum Role {
 
 /// A word to emphasize in job descriptions (managed by admins). The unique
 /// constraint is case-insensitive via the utf8mb4_unicode_ci collation.
+/// A company a profile does not want to see jobs from.
+///
+/// Distinct from the scraper's `company_blocklist` setting, which is global,
+/// admin-only, and stops a posting being STORED at all. This is a per-profile
+/// judgement made by the bidders themselves, and it only FLAGS: the job stays
+/// in the list and stays actionable, because "we don't bid this employer" is
+/// advice to the person reading, not a reason to hide work from them.
+///
+/// `profileId` null means EVERY profile — the "All" scope in the UI. MySQL
+/// treats NULLs as distinct, so a unique index cannot enforce one-global-entry
+/// per company; blacklistService does that check instead.
+model CompanyBlacklist {
+  id Int @id @default(autoincrement())
+
+  /// As typed, for display.
+  company String @db.VarChar(255)
+
+  /// Normalised for matching: trimmed, lower-cased, internal whitespace
+  /// collapsed. Matching is WHOLE-NAME, never substring, for the reason the
+  /// scraper's blocklist documents — "Ladders" the agency must not also take
+  /// out "Ladder" the employer.
+  companyKey String @map("company_key") @db.VarChar(255)
+
+  /// Null = applies to every profile.
+  profileId Int?     @map("profile_id")
+  profile   Profile? @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  /// Who added it — shown in the list so a shared profile can see whose call
+  /// this was.
+  createdById Int  @map("created_by_id")
+  createdBy   User @relation("BlacklistCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// Lookups are always "these companies, for this profile or globally".
+  @@index([companyKey])
+  @@index([profileId])
+  @@map("company_blacklist")
+}
+
 model Keyword {
   id        Int      @id @default(autoincrement())
   word      String   @unique @db.VarChar(128)
@@ -402,6 +446,7 @@ model Profile {
   coverLetters    CoverLetter[]
   interviews      Interview[]
   aiQueries       JobAiQuery[]
+  blacklist       CompanyBlacklist[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
