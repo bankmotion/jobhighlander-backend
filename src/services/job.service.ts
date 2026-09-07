@@ -1,3 +1,4 @@
+import { blacklistService, companyKey } from './blacklist.service';
 import { Prisma, JobSite } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { addZonedDays, endOfZonedDate, resolveZone, startOfZonedDate, startOfZonedDay } from '../lib/zone';
@@ -276,11 +277,22 @@ export const jobService = {
       prisma.job.findFirst({ where, orderBy: { id: 'desc' }, select: { id: true } }),
     ]);
 
+    // Which of the page's employers are blacklisted. Looked up from the page's
+    // own company names rather than joined across the whole table: a page is 20
+    // rows, so this is one small indexed query instead of a join over 30k jobs.
+    const flags = await blacklistService.flagsFor(
+      rows.map((r) => r.company ?? ''),
+      profileId,
+    );
+
     // Flatten Prisma's `_count` into a plain field so the API shape stays a
     // list of jobs rather than leaking the ORM's relation-count envelope.
     const items = rows.map(({ _count, ...job }) => ({
       ...job,
       appliedCount: _count.applications,
+      // null when the employer is not blacklisted; 'all' or 'profile' says
+      // WHICH list caught it, so the badge can be honest about scope.
+      blacklisted: (job.company ? (flags.get(companyKey(job.company)) ?? null) : null),
     }));
 
     return {
