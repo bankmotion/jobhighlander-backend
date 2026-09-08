@@ -197,6 +197,26 @@ export const authService = {
     return prisma.user.findMany({ orderBy: { createdAt: 'asc' }, select: PUBLIC_USER });
   },
 
+  /**
+   * People who have signed up and are waiting to be given a role.
+   *
+   * Separate from `listUsers` so admins can be shown this without being shown
+   * the roster. An admin needs to know who is waiting in order to onboard them;
+   * that is not the same as needing every colleague's address and role, and one
+   * query that returns both would make the narrower permission impossible to
+   * express.
+   *
+   * Newest first, the opposite of `listUsers`: this is a queue to work through,
+   * and the person who just signed up is the one asking about it.
+   */
+  listPendingUsers() {
+    return prisma.user.findMany({
+      where: { role: 'guest' },
+      orderBy: { createdAt: 'desc' },
+      select: PUBLIC_USER,
+    });
+  },
+
   async getAuthUser(id: number): Promise<{ id: number; email: string; role: Role } | null> {
     const user = await prisma.user.findUnique({
       where: { id },

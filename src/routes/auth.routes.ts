@@ -91,6 +91,28 @@ authRouter.get('/users', requireAuth, requireRole('super_admin'), async (_req, r
  * row is what tells that sign-in they are already a bidder rather than a guest
  * waiting on approval.
  */
+/**
+ * The sign-up queue: accounts still waiting for a role.
+ *
+ * Admin-level, where the full listing above is super-admin only. Admins are
+ * already allowed to turn a guest into a bidder, and without this they had no
+ * way to discover there was a guest to turn — the permission existed but was
+ * unreachable. Restricted to guests so that reaching it grants exactly the
+ * ability to clear the queue and nothing else about who else has an account.
+ */
+authRouter.get(
+  '/users/pending',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (_req, res, next) => {
+    try {
+      res.json(await authService.listPendingUsers());
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 authRouter.post(
   '/users',
   requireAuth,
