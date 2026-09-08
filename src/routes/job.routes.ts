@@ -69,6 +69,11 @@ jobRouter.get('/', async (req: AuthedRequest, res: Response, next: NextFunction)
       // "N profiles applied" spans every profile on the board, including ones
       // this caller cannot see. Super admins only.
       includeAppliedCount: req.user!.role === 'super_admin',
+      // Same restriction, same reason. Hiding the badge but honouring
+      // ?othersApplied=others would leave the information reachable by URL:
+      // the filter names exactly the postings the badge would have marked, so
+      // gating one without the other only hides the label, not the fact.
+      othersApplied: req.user!.role === 'super_admin' ? rest.othersApplied : undefined,
     });
     res.json(result);
   } catch (err) {
