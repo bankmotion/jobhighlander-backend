@@ -98,6 +98,40 @@ export const authService = {
     };
   },
 
+  /**
+   * An admin creating a bidder account outright.
+   *
+   * Active immediately — NOT `guest` awaiting approval. Self-registration
+   * yields a guest precisely because nobody vouched for the person; here an
+   * admin has, by typing their address and setting their password, so a second
+   * approval step would only be the same admin waiting on a super admin to
+   * confirm a decision they already made.
+   *
+   * Fixed to `bidder`. Creating an admin or a super admin is a different act
+   * with a different blast radius, and it stays where it was: a super admin
+   * changing a role.
+   */
+  async createBidder(
+    emailRaw: string,
+    password: string,
+    createdById: number,
+  ): Promise<{ ok: true; id: number; email: string } | { ok: false; reason: 'exists' }> {
+    const email = emailRaw.toLowerCase().trim();
+    if (await prisma.user.findUnique({ where: { email } })) return { ok: false, reason: 'exists' };
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({
+      data: { email, passwordHash, role: 'bidder' },
+      select: { id: true, email: true },
+    });
+    logger.info('Bidder account created by an admin', {
+      bidderId: user.id,
+      email: user.email,
+      createdById,
+    });
+    return { ok: true, id: user.id, email: user.email };
+  },
+
   async login(
     emailRaw: string,
     password: string,

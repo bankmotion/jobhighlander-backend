@@ -75,10 +75,56 @@ authRouter.get('/users', requireAuth, requireRole('super_admin'), async (_req, r
   }
 });
 
+/**
+ * An admin creating a bidder account.
+ *
+ * Admin-level, not super-admin: admins are the ones who bring bidders on, and
+ * routing that through a super admin made onboarding wait on someone who was
+ * not part of the decision. The account is usable at once — see
+ * `authService.createBidder` for why there is no approval step.
+ *
+ * The role is NOT taken from the body. Accepting one would turn this into
+ * "create a user with any role you name", which is a different power from the
+ * one being granted here.
+ */
+authRouter.post(
+  '/users',
+  requireAuth,
+  requireRole('admin', 'super_admin'),
+  async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const parsed = z
+        .object({
+          email: z.string().trim().email().max(255),
+          // Matches what self-registration demands, so an admin-made account is
+          // no weaker than one someone made for themselves.
+          password: z.string().min(8).max(200),
+        })
+        .safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: 'A valid email and a password of at least 8 characters are required' });
+      }
+      const result = await authService.createBidder(
+        parsed.data.email,
+        parsed.data.password,
+        req.user!.id,
+      );
+      if (!result.ok) {
+        return res.status(409).json({ error: 'An account with that email already exists' });
+      }
+      res.status(201).json({ id: result.id, email: result.email, role: 'bidder' });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 authRouter.post(
   '/users/:id/role',
   requireAuth,
-  requireRole('super_admin'),
+  requireRole('admin', 'super_admin'),
   async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       const id = Number(req.params.id);
@@ -90,17 +136,27 @@ authRouter.post(
       const actor = req.user!;
       if (id === actor.id) return res.status(400).json({ error: 'You cannot change your own role' });
 
-      // Promoting someone to super_admin is allowed, and only a super_admin can
-      // do it — `requireRole` above is what guarantees that, and the branch
-      // below re-states it so loosening the middleware cannot silently turn
-      // this into a self-service escalation.
+      // Admins reach this handler now, so this check is what actually bounds
+      // them — it used to be unreachable behind a super-admin-only middleware.
+      // An admin may approve someone AS A BIDDER and nothing else; making
+      // admins, super admins, or demoting anyone stays with super admins.
       //
-      // It hands over full control, the grantee included: a super_admin can
-      // change anyone's role but their own, so the person you promote can
-      // demote you. That was already true of the existing roles — this widens
-      // who it is true of, not what it means.
+      // Promoting to super_admin hands over full control, the grantee included:
+      // a super_admin can change anyone's role but their own, so the person you
+      // promote can demote you.
       if (actor.role !== 'super_admin' && target !== 'bidder') {
         return res.status(403).json({ error: 'Admins can only approve users as bidders' });
+      }
+      // An admin must not be able to demote or re-scope an existing admin or
+      // super admin by "approving" them as a bidder.
+      if (actor.role !== 'super_admin') {
+        const current = await authService.getAuthUser(id);
+        if (!current) return res.status(404).json({ error: 'User not found' });
+        if (current.role !== 'guest') {
+          return res
+            .status(403)
+            .json({ error: 'Admins can only approve accounts that are awaiting approval' });
+        }
       }
       res.json(await authService.setRole(id, target));
     } catch (err) {
