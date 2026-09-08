@@ -38,6 +38,9 @@ const listQuerySchema = z.object({
   // questions and neither substitutes for the other: at 01:00 local, 'today' is
   // an hour long and empty, while '24h' is the thousand-odd jobs posted since
   // yesterday morning.
+  // Per profile, like applied/discarded/interview: ignored server-side when no
+  // profile is selected, because there is nobody to have generated it.
+  resume: z.enum(['all', 'generated', 'notgenerated']).default('all'),
   posted: z.enum(['all', 'today', '24h', '3d', 'custom']).default('all'),
   postedFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   postedTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),

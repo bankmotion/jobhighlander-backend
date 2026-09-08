@@ -15,6 +15,11 @@ export type DiscardedFilter = 'all' | 'discarded' | 'undiscarded';
 // like applied and discarded: an interview belongs to the profile that got it.
 export type InterviewFilter = 'all' | 'started' | 'notstarted';
 
+// Whether a tailored resume has been generated for the pairing. Per PROFILE for
+// the same reason: a resume is written FROM a profile, so "already generated"
+// is only answerable once there is one to answer for.
+export type ResumeFilter = 'all' | 'generated' | 'notgenerated';
+
 export interface ListJobsParams {
   sites?: string[];
   remote?: boolean;
@@ -39,6 +44,7 @@ export interface ListJobsParams {
   includeAppliedCount?: boolean;
   discarded?: DiscardedFilter;
   interview?: InterviewFilter;
+  resume?: ResumeFilter;
   profileId?: number;
   posted?: PostedFilter;
   /** ISO dates (YYYY-MM-DD), inclusive, interpreted in `tz`. */
@@ -243,6 +249,17 @@ export const jobService = {
           ? { interviews: { some: { profileId } } }
           : { interviews: { none: { profileId } } };
 
+    // Resumes keep a nullable jobId so a generated document survives its
+    // posting being deleted. That does not affect this filter: matching is
+    // through the job's own relation, so a detached resume simply is not on any
+    // job any more, which is exactly what it means.
+    const resumeWhere: Prisma.JobWhereInput =
+      !profileId || !params.resume || params.resume === 'all'
+        ? {}
+        : params.resume === 'generated'
+          ? { resumes: { some: { profileId } } }
+          : { resumes: { none: { profileId } } };
+
     const where: Prisma.JobWhereInput = {
       ...postedWhere(params),
       ...(validSites.length ? { site: { in: validSites } } : {}),
@@ -255,6 +272,7 @@ export const jobService = {
       ...othersAppliedWhere(params),
       ...discardedWhere,
       ...interviewWhere,
+      ...resumeWhere,
       ...(q
         ? {
             OR: [
@@ -351,6 +369,13 @@ export const jobService = {
           ? { interviews: { some: { profileId } } }
           : { interviews: { none: { profileId } } };
 
+    const resumeWhere: Prisma.JobWhereInput =
+      !profileId || !params.resume || params.resume === 'all'
+        ? {}
+        : params.resume === 'generated'
+          ? { resumes: { some: { profileId } } }
+          : { resumes: { none: { profileId } } };
+
     return prisma.job.count({
       where: {
         id: { gt: afterId },
@@ -364,6 +389,7 @@ export const jobService = {
         ...othersAppliedWhere(params),
         ...discardedWhere,
         ...interviewWhere,
+        ...resumeWhere,
         ...(q
           ? {
               OR: [
