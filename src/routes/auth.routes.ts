@@ -86,6 +86,10 @@ authRouter.get('/users', requireAuth, requireRole('super_admin'), async (_req, r
  * The role is NOT taken from the body. Accepting one would turn this into
  * "create a user with any role you name", which is a different power from the
  * one being granted here.
+ *
+ * The address is the whole payload: the person signs in with Google, and this
+ * row is what tells that sign-in they are already a bidder rather than a guest
+ * waiting on approval.
  */
 authRouter.post(
   '/users',
@@ -93,24 +97,15 @@ authRouter.post(
   requireRole('admin', 'super_admin'),
   async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
+      // Email only. Sign-in is Google-only, so a password collected here would
+      // be a credential nobody could ever use.
       const parsed = z
-        .object({
-          email: z.string().trim().email().max(255),
-          // Matches what self-registration demands, so an admin-made account is
-          // no weaker than one someone made for themselves.
-          password: z.string().min(8).max(200),
-        })
+        .object({ email: z.string().trim().email().max(255) })
         .safeParse(req.body);
       if (!parsed.success) {
-        return res
-          .status(400)
-          .json({ error: 'A valid email and a password of at least 8 characters are required' });
+        return res.status(400).json({ error: 'A valid email address is required' });
       }
-      const result = await authService.createBidder(
-        parsed.data.email,
-        parsed.data.password,
-        req.user!.id,
-      );
+      const result = await authService.createBidder(parsed.data.email, req.user!.id);
       if (!result.ok) {
         return res.status(409).json({ error: 'An account with that email already exists' });
       }
