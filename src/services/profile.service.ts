@@ -90,8 +90,26 @@ const summarySelect = {
   lastName: true,
   location: true,
   updatedAt: true,
-  owner: { select: { id: true, email: true } },
+  owner: { select: { id: true, email: true, role: true } },
   _count: { select: { workExperiences: true, educations: true } },
+  // Who else can use this profile. Both ACCEPTED and PENDING are returned:
+  // "invited but has not accepted" is a different fact from "has access", and
+  // an owner chasing a bidder needs to see the difference rather than wonder
+  // why someone they invited is missing from the list.
+  invitations: {
+    // Everything except declined — i.e. has access, or was asked and has not
+    // answered. A declined invitation is not a member by any reading.
+    where: { status: { not: 'declined' } },
+    select: {
+      id: true,
+      status: true,
+      createdAt: true,
+      respondedAt: true,
+      user: { select: { id: true, email: true, role: true } },
+      invitedBy: { select: { id: true, email: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+  },
 } as const;
 
 const withAccess = <T extends { ownerId: number }>(row: T, userId: number) => ({
