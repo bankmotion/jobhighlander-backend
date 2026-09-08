@@ -72,12 +72,25 @@ export const enabledProviders = (): AiProvider[] => AI_PROVIDERS.filter(provider
 export const aiEnabled = (): boolean => enabledProviders().length > 0;
 
 /**
- * The provider used when the caller names none — the first configured one, in
- * the declared order. A request that omits `provider` still has to land
- * somewhere, and picking a provider with no key would fail deep inside the SDK.
+ * The provider used when the caller names none.
+ *
+ * OpenAI by preference, because it is several times cheaper per generation at
+ * the rates this deployment bills — output tokens dominate a resume and its
+ * output rate is a fraction of Claude's. Stated as an explicit constant rather
+ * than left to the order of `AI_PROVIDERS`: "the first one in the array" is not
+ * a decision anyone can find, and reordering that list for an unrelated reason
+ * would silently move everybody's default.
+ *
+ * Falls back to whatever IS configured when the preferred provider has no key —
+ * a request that omits `provider` still has to land somewhere, and choosing one
+ * with no key would fail deep inside the SDK.
  */
+const PREFERRED_DEFAULT: AiProvider = 'openai';
+
 export function defaultProvider(): AiProvider | null {
-  return enabledProviders()[0] ?? null;
+  const enabled = enabledProviders();
+  if (enabled.includes(PREFERRED_DEFAULT)) return PREFERRED_DEFAULT;
+  return enabled[0] ?? null;
 }
 
 /**
