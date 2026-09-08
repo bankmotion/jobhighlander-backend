@@ -66,6 +66,9 @@ jobRouter.get('/', async (req: AuthedRequest, res: Response, next: NextFunction)
       sites: site,
       remote: remote === '1' || remote === 'true',
       profileId: usable ? profileId : undefined,
+      // "N profiles applied" spans every profile on the board, including ones
+      // this caller cannot see. Super admins only.
+      includeAppliedCount: req.user!.role === 'super_admin',
     });
     res.json(result);
   } catch (err) {
@@ -164,13 +167,13 @@ jobRouter.get('/new-count', async (req: AuthedRequest, res: Response, next: Next
   }
 });
 
-jobRouter.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
+jobRouter.get('/:id', async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
       return res.status(400).json({ error: 'Invalid id' });
     }
-    const job = await jobService.getById(id);
+    const job = await jobService.getById(id, req.user!.role === 'super_admin');
     if (!job) return res.status(404).json({ error: 'Job not found' });
     res.json(job);
   } catch (err) {

@@ -27,6 +27,16 @@ export interface ListJobsParams {
   description?: string;
   applied?: AppliedFilter;
   othersApplied?: OthersAppliedFilter;
+  /**
+   * Return `appliedCount` — how many profiles across the WHOLE board have
+   * applied to each posting.
+   *
+   * Off by default and set only for super admins. It is a fact about other
+   * people's activity, including profiles the caller cannot see, so it is
+   * withheld at the source rather than hidden in the UI: a badge removed
+   * from a component is still in the JSON for anyone who opens devtools.
+   */
+  includeAppliedCount?: boolean;
   discarded?: DiscardedFilter;
   interview?: InterviewFilter;
   profileId?: number;
@@ -289,7 +299,9 @@ export const jobService = {
     // list of jobs rather than leaking the ORM's relation-count envelope.
     const items = rows.map(({ _count, ...job }) => ({
       ...job,
-      appliedCount: _count.applications,
+      // Omitted entirely, not zeroed: absent means "not for you to know", while
+      // a 0 would assert that nobody has applied.
+      ...(params.includeAppliedCount ? { appliedCount: _count.applications } : {}),
       // Blacklisted for the profile being viewed as. Every entry belongs to a
       // profile, so with none selected nothing is flagged.
       blacklisted: Boolean(job.company && flags.has(companyKey(job.company))),
@@ -365,17 +377,18 @@ export const jobService = {
     });
   },
 
-  async getById(id: number) {
+  async getById(id: number, includeAppliedCount = false) {
     // Carries `appliedCount` for the same reason list() does: the standalone
     // job page shows the same badge row as the card, and a badge that appears
     // in the list then disappears when you open the posting reads as a bug.
+    // Gated the same way too — super admins only.
     const row = await prisma.job.findUnique({
       where: { id },
       include: { _count: { select: { applications: true } } },
     });
     if (!row) return row;
     const { _count, ...job } = row;
-    return { ...job, appliedCount: _count.applications };
+    return includeAppliedCount ? { ...job, appliedCount: _count.applications } : job;
   },
 
   async filters() {
