@@ -405,11 +405,23 @@ export const aiUsageService = {
       // the call that caused it. Never throws — the vendor has already been
       // paid, and losing the document the user waited for to report a
       // bookkeeping problem would be the worse trade.
+      //
+      // The PAYER is the profile's owner, not whoever ran the call. The usage
+      // row above still records `userId`, because that is a true receipt of who
+      // did the work and the per-user reporting depends on it; only the money
+      // moves. When a bidder generates against someone else's profile, the
+      // owner's balance is what pays.
+      const payerId = await billingService.payerFor(profileId, userId);
       await billingService.chargeUsage({
-        userId,
+        userId: payerId,
         amountMicroUsd: priced.costMicroUsd,
         aiUsageId: row.id,
-        note: `${featureLabel(feature)} · ${model}`,
+        // Names the operator when they are not the payer, so the owner's ledger
+        // does not show unexplained spend they did not cause.
+        note:
+          payerId === userId
+            ? `${featureLabel(feature)} · ${model}`
+            : `${featureLabel(feature)} · ${model} · by ${user?.email ?? `user ${userId}`}`,
       });
     } catch (err) {
       logger.error('Failed to record AI usage; spend for this call is missing', {

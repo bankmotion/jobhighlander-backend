@@ -52,7 +52,7 @@ export const generationService = {
     // stop a repeated or crafted request, and this is the last point before a
     // billable call. 403, not 404 — the profile is theirs to see, it just may
     // not spend.
-    await assertFunded(userId);
+    await assertFunded(profileId, userId);
 
     const { name, contact } = profileIdentity(profile);
 
@@ -204,23 +204,31 @@ Produce the tailored resume and the cover letter paragraphs now.`;
 
 
 /**
- * Refuse the call when the balance is spent.
+ * Refuse the call when the paying balance is spent.
  *
- * Checked on the ACTING USER, not the profile: a shared profile is used by
- * several people and each pays for their own generations.
+ * Checked on the PROFILE'S OWNER, because that is who the charge lands on. It
+ * used to check the acting user, which no longer matches where the money comes
+ * from — a bidder with an empty balance would have been blocked from working a
+ * well-funded profile, and a funded bidder would have been let through against
+ * an owner who could not pay.
  *
  * A positive balance is required to START a call. The cost is not known until
- * the vendor answers, so the last call a user makes can push them slightly
- * negative — that debt is recorded rather than refused, and the next call is
- * the one that gets blocked. 402, not 403: this is "pay for it", not "you may
- * never do this".
+ * the vendor answers, so the last call can push the balance slightly negative —
+ * that debt is recorded rather than refused, and the next call is the one that
+ * gets blocked. 402, not 403: this is "pay for it", not "you may never do this".
  */
-async function assertFunded(userId: number): Promise<void> {
-  const { canSpend, balanceUsd } = await billingService.balanceOf(userId);
+async function assertFunded(profileId: number, userId: number): Promise<void> {
+  const payerId = await billingService.payerFor(profileId, userId);
+  const { canSpend, balanceUsd } = await billingService.balanceOf(payerId);
   if (!canSpend) {
+    const amount = `${balanceUsd < 0 ? '-' : ''}$${Math.abs(balanceUsd).toFixed(2)}`;
+    // Says WHOSE balance. Telling a bidder "your balance is $0.00" when it is
+    // the profile owner who needs to top up sends them to the wrong place.
     throw new ResumeInputError(
-      `Your balance is ${balanceUsd < 0 ? '-' : ''}$${Math.abs(balanceUsd).toFixed(2)}. ` +
-        'Top up with USDT to keep using the AI.',
+      payerId === userId
+        ? `Your balance is ${amount}. Top up with USDT to keep using the AI.`
+        : `This profile's owner has a balance of ${amount}. ` +
+          'They need to top up before it can be used for AI generation.',
       402,
     );
   }

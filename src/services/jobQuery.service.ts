@@ -124,14 +124,18 @@ export const jobQueryService = {
     // A profile they may not use and one that does not exist are the same 404,
     // so the endpoint never confirms which profile ids are real.
     if (!profile) throw new ResumeInputError('Profile not found', 404);
-    // Same gate as resume generation: Ask AI is a billable call too, and a
-    // profile that may not spend must not spend here either.
-    // Same gate as generation: Ask AI is a billable call and spends the same
-    // balance. See generation.service.ts for why a positive balance is the bar.
-    const funded = await billingService.balanceOf(userId);
+    // Same gate as resume generation: Ask AI is a billable call and spends the
+    // same balance — the PROFILE OWNER'S, since that is who gets charged. See
+    // generation.service.ts for why a positive balance is the bar.
+    const payerId = await billingService.payerFor(profileId, userId);
+    const funded = await billingService.balanceOf(payerId);
     if (!funded.canSpend) {
+      const amount = `${funded.balanceUsd < 0 ? '-' : ''}$${Math.abs(funded.balanceUsd).toFixed(2)}`;
       throw new ResumeInputError(
-        `Your balance is $${funded.balanceUsd.toFixed(2)}. Top up with USDT to keep using the AI.`,
+        payerId === userId
+          ? `Your balance is ${amount}. Top up with USDT to keep using the AI.`
+          : `This profile's owner has a balance of ${amount}. ` +
+            'They need to top up before it can be used for AI generation.',
         402,
       );
     }

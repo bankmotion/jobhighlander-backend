@@ -246,6 +246,28 @@ export const billingService = {
     }
   },
 
+  /**
+   * Whose balance pays for AI work done on a profile: its OWNER.
+   *
+   * A shared profile is worked by bidders who do not own it, and the spend
+   * belongs to whoever owns the candidate the work is for — not to whoever
+   * happened to press the button. Charging the bidder made a bidder's ability
+   * to work depend on their own top-ups for someone else's profile.
+   *
+   * Falls back to the acting user when there is no profile, or when the profile
+   * has since been deleted: the vendor has been paid either way, and an
+   * unattributable charge on the person who made it is better than a charge
+   * that lands nowhere.
+   */
+  async payerFor(profileId: number | null | undefined, actingUserId: number): Promise<number> {
+    if (!profileId) return actingUserId;
+    const profile = await prisma.profile.findUnique({
+      where: { id: profileId },
+      select: { ownerId: true },
+    });
+    return profile?.ownerId ?? actingUserId;
+  },
+
   /** A super admin moving a balance by hand, in either direction. */
   async adjust(input: {
     userId: number;
