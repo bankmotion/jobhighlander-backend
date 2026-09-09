@@ -167,6 +167,11 @@ jobRouter.get('/new-count', async (req: AuthedRequest, res: Response, next: Next
       sites: site,
       remote: remote === '1' || remote === 'true',
       profileId: usable ? profileId : undefined,
+      // The SAME gate the list applies. Counting with a filter the list then
+      // ignores makes the two disagree, and the banner is built on them
+      // agreeing: it offers jobs the list will not show, so pressing it changes
+      // nothing and the count never clears.
+      othersApplied: req.user!.role === 'super_admin' ? rest.othersApplied : undefined,
       afterId: after.data.afterId,
     });
     res.json({ count });
