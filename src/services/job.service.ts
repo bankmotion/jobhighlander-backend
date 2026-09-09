@@ -45,6 +45,21 @@ export interface ListJobsParams {
   discarded?: DiscardedFilter;
   interview?: InterviewFilter;
   resume?: ResumeFilter;
+  /**
+   * Highest job id the reader's paging is pinned to.
+   *
+   * Offset paging over a table that is being written to is unstable: the
+   * scrapers insert at the TOP of a newest-first list, so every arrival pushes
+   * the whole list down. Someone on page 4 then finds rows they already read on
+   * page 3, and rows in the gap are skipped entirely — the further they page,
+   * the more they lose.
+   *
+   * Pinning to the newest id at the moment paging began makes every page come
+   * from one fixed set. Arrivals above the pin are not hidden — they are what
+   * the "new jobs" banner counts, and pressing it drops the pin for a fresh
+   * one, which keeps the choice with the reader rather than the scraper.
+   */
+  snapshotId?: number;
   profileId?: number;
   posted?: PostedFilter;
   /** ISO dates (YYYY-MM-DD), inclusive, interpreted in `tz`. */
@@ -273,6 +288,10 @@ export const jobService = {
       ...discardedWhere,
       ...interviewWhere,
       ...resumeWhere,
+      // Everything at or below the pin. Applied to the count as well as the
+      // rows, so "Page 4 of 9" cannot describe a different set than the one
+      // being paged through.
+      ...(params.snapshotId ? { id: { lte: params.snapshotId } } : {}),
       ...(q
         ? {
             OR: [
@@ -288,7 +307,11 @@ export const jobService = {
       prisma.job.count({ where }),
       prisma.job.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        // `id` breaks ties. A batch of scraped rows shares a createdAt to the
+        // millisecond, and ordering by that alone leaves their relative order
+        // undefined — so the same query can deal them into different pages on
+        // consecutive requests, which looks exactly like rows going missing.
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
         // How many profiles have applied to each posting, counted across ALL
@@ -302,7 +325,15 @@ export const jobService = {
       // read. Page 2's highest id is not the newest job, so polling for new
       // arrivals from it would under- or over-count depending where the reader
       // happens to be.
-      prisma.job.findFirst({ where, orderBy: { id: 'desc' }, select: { id: true } }),
+      //
+      // Deliberately WITHOUT the snapshot pin: this is the reader's baseline
+      // for "what has arrived since", and pinning it would make it report the
+      // pin itself forever, so the banner could never see past the freeze.
+      prisma.job.findFirst({
+        where: { ...where, id: undefined },
+        orderBy: { id: 'desc' },
+        select: { id: true },
+      }),
     ]);
 
     // Which of the page's employers are blacklisted. Looked up from the page's
