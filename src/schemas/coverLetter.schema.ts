@@ -5,7 +5,6 @@ import { AI_PROVIDERS } from '../lib/ai';
 export const coverLetterRequestSchema = z.object({
   jobId: z.coerce.number().int().positive(),
   profileId: z.coerce.number().int().positive(),
-  notes: z.string().trim().max(4_000).optional().default(''),
   provider: z.enum(AI_PROVIDERS).optional(),
 });
 

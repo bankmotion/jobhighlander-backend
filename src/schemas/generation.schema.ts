@@ -34,7 +34,6 @@ export const customPromptField = z.string().max(6_000).optional();
 export const applicationRequestSchema = z.object({
   jobId: z.coerce.number().int().positive(),
   profileId: z.coerce.number().int().positive(),
-  notes: z.string().trim().max(4_000).optional().default(''),
   provider: providerField,
   customPrompt: customPromptField,
 });

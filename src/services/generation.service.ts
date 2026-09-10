@@ -25,7 +25,7 @@ export interface GeneratedApplication {
 
 export const generationService = {
   async generate(
-    { jobId, profileId, notes, provider, customPrompt }: ApplicationRequest,
+    { jobId, profileId, provider, customPrompt }: ApplicationRequest,
     userId: number,
   ): Promise<GeneratedApplication> {
     // Resolved before anything is read: a provider this server cannot call is a
@@ -85,17 +85,18 @@ export const generationService = {
       .map((e) => `- ${[e.degree, e.university].filter(Boolean).join(', ')}${e.location ? ` (${e.location})` : ''} — ${e.datePrecision === 'year' ? yearsOf(e.startDate, e.endDate) : periodOf(e.startDate, e.endDate)}`)
       .join('\n');
 
-    // Only include the notes section when there is something in it. An empty
-    // quoted block reads to the model as "the candidate stated nothing, and
-    // that emptiness is meaningful", which suppresses the inference we want.
-    const notesBlock = notes.trim()
-      ? `The candidate's own notes, which apply to BOTH documents. These OUTRANK
-your inference wherever they touch — reword and reorder them, never overwrite
-them:
-"""
-${notes.trim()}
-"""`
-      : `The candidate supplied no notes. Draft the titles, responsibilities and
+    // The candidate no longer supplies notes: the field was removed from the
+    // Resume tab, so this is a constant rather than the two-way branch it used
+    // to be. The wording is unchanged from the branch that applied whenever the
+    // box was left empty, which is what most generations did — keeping it
+    // verbatim is what makes restoring the field a small change rather than a
+    // rewrite.
+    //
+    // The application prompt still describes what to do WHEN notes exist. That
+    // text is conditional ("if the candidate's own notes are supplied"), so it
+    // simply never fires, and it is left in place so the prompt needs no
+    // migration if the field returns.
+    const notesBlock = `The candidate supplied no notes. Draft the titles, responsibilities and
 skills yourself from the employment history above and the posting below, and
 flag every one of them inferred=true.`;
 
