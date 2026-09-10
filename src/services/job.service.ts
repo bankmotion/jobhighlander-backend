@@ -1,4 +1,5 @@
 import { blacklistService, companyKey } from './blacklist.service';
+import type { InterviewStatus } from '@prisma/client';
 import { Prisma, JobSite } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { addZonedDays, endOfZonedDate, resolveZone, startOfZonedDate, startOfZonedDay } from '../lib/zone';
@@ -11,9 +12,25 @@ export type AppliedFilter = 'all' | 'applied' | 'unapplied';
 
 export type DiscardedFilter = 'all' | 'discarded' | 'undiscarded';
 
-// Whether an interview timeline has been opened for the pairing. Per PROFILE,
-// like applied and discarded: an interview belongs to the profile that got it.
-export type InterviewFilter = 'all' | 'started' | 'notstarted';
+// Whether an interview timeline has been opened for the pairing, or which
+// status it is in. Per PROFILE, like applied and discarded: an interview
+// belongs to the profile that got it.
+//
+// Statuses share this one filter rather than getting a second control: "has an
+// interview" and "has a REJECTED interview" are the same question at different
+// resolutions, and two controls would let a reader ask for a rejected interview
+// on a job with no interview at all.
+export type InterviewFilter =
+  | 'all'
+  | 'started'
+  | 'notstarted'
+  | 'active'
+  | 'offer'
+  | 'accepted'
+  | 'rejected'
+  | 'withdrawn'
+  | 'ghosted'
+  | 'on_hold';
 
 // Whether a tailored resume has been generated for the pairing. Per PROFILE for
 // the same reason: a resume is written FROM a profile, so "already generated"
@@ -262,7 +279,12 @@ export const jobService = {
         ? {}
         : interview === 'started'
           ? { interviews: { some: { profileId } } }
-          : { interviews: { none: { profileId } } };
+          : interview === 'notstarted'
+            ? { interviews: { none: { profileId } } }
+            : // A named status. Matched on the profile's OWN interview, so a
+              // colleague's rejection on a shared board does not filter a job
+              // out of this reader's list.
+              { interviews: { some: { profileId, status: interview as InterviewStatus } } };
 
     // Resumes keep a nullable jobId so a generated document survives its
     // posting being deleted. That does not affect this filter: matching is
@@ -398,7 +420,13 @@ export const jobService = {
         ? {}
         : params.interview === 'started'
           ? { interviews: { some: { profileId } } }
-          : { interviews: { none: { profileId } } };
+          : params.interview === 'notstarted'
+            ? { interviews: { none: { profileId } } }
+            : {
+                interviews: {
+                  some: { profileId, status: params.interview as InterviewStatus },
+                },
+              };
 
     const resumeWhere: Prisma.JobWhereInput =
       !profileId || !params.resume || params.resume === 'all'

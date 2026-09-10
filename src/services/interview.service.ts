@@ -48,6 +48,12 @@ export interface InterviewDetail {
   jobTitle: string;
   jobCompany: string | null;
   status: InterviewStatus;
+  /**
+   * Memo per status. The whole map, not just the current one, so switching the
+   * dropdown can show that status's own note immediately instead of asking the
+   * server what it already sent.
+   */
+  statusNotes: Record<string, string>;
   lastActivityAt: Date;
   openedBy: string;
   steps: StepRow[];
@@ -155,6 +161,23 @@ type RawInterview = {
   }[];
 };
 
+/**
+ * The stored memos, as a plain map.
+ *
+ * Defensive because the column is `Json`: MySQL will hand back whatever was
+ * written, and a hand-edited row or an older shape must not throw on read. A
+ * malformed value degrades to "no notes", which is what an absent column means
+ * anyway.
+ */
+export function readStatusNotes(value: unknown): Record<string, string> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === 'string' && v.trim()) out[k] = v;
+  }
+  return out;
+}
+
 function shape(row: RawInterview): InterviewDetail {
   return {
     id: row.id,
@@ -163,6 +186,7 @@ function shape(row: RawInterview): InterviewDetail {
     jobTitle: row.jobTitle,
     jobCompany: row.jobCompany,
     status: row.status as InterviewStatus,
+    statusNotes: readStatusNotes((row as { statusNotes?: unknown }).statusNotes),
     lastActivityAt: row.lastActivityAt,
     openedBy: row.openedBy.email,
     steps: row.steps.map((s) => {
@@ -244,13 +268,24 @@ export const interviewService = {
     jobIds: number[],
     profileId: number,
     userId: number,
-  ): Promise<Record<number, { interviewId: number; status: InterviewStatus; steps: number }>> {
+  ): Promise<
+    Record<number, { interviewId: number; status: InterviewStatus; steps: number; note: string | null }>
+  > {
     if (jobIds.length === 0) return {};
     const rows = await prisma.interview.findMany({
       where: { jobId: { in: jobIds }, profileId, profile: usableProfileWhere(userId) },
-      select: { id: true, jobId: true, status: true, _count: { select: { steps: true } } },
+      select: {
+        id: true,
+        jobId: true,
+        status: true,
+        statusNotes: true,
+        _count: { select: { steps: true } },
+      },
     });
-    const out: Record<number, { interviewId: number; status: InterviewStatus; steps: number }> = {};
+    const out: Record<
+      number,
+      { interviewId: number; status: InterviewStatus; steps: number; note: string | null }
+    > = {};
     for (const r of rows) {
       // jobId is nullable (a deleted posting sets it null), so a row can come
       // back without one even though the filter asked for a set.
@@ -259,17 +294,44 @@ export const interviewService = {
         interviewId: r.id,
         status: r.status as InterviewStatus,
         steps: r._count.steps,
+        // Only the CURRENT status's memo travels to the list. The badge shows
+        // one status, so the others would be payload nobody reads.
+        note: readStatusNotes(r.statusNotes)[r.status] ?? null,
       };
     }
     return out;
   },
 
-  async setStatus(id: number, status: InterviewStatus, userId: number): Promise<InterviewDetail> {
+  /**
+   * Set the status, and optionally the memo that explains it.
+   *
+   * `note` undefined leaves the stored memo alone — the status dropdown and the
+   * memo field save independently, and a status change must not silently wipe a
+   * note somebody wrote. An empty string is the explicit erase.
+   */
+  async setStatus(
+    id: number,
+    status: InterviewStatus,
+    userId: number,
+    note?: string,
+  ): Promise<InterviewDetail> {
     await assertInterview(id, userId);
-    await prisma.interview.update({
-      where: { id },
-      data: { status, lastActivityAt: new Date() },
-    });
+    const data: { status: InterviewStatus; lastActivityAt: Date; statusNotes?: object } = {
+      status,
+      lastActivityAt: new Date(),
+    };
+    if (note !== undefined) {
+      const current = await prisma.interview.findUnique({
+        where: { id },
+        select: { statusNotes: true },
+      });
+      const notes = readStatusNotes(current?.statusNotes);
+      const trimmed = note.trim();
+      if (trimmed) notes[status] = trimmed;
+      else delete notes[status];
+      data.statusNotes = notes;
+    }
+    await prisma.interview.update({ where: { id }, data });
     return this.get(id, userId);
   },
 

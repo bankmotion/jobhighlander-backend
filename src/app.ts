@@ -8,6 +8,7 @@ import { profileRouter } from './routes/profile.routes';
 import { invitationRouter } from './routes/invitation.routes';
 import { applicationRouter } from './routes/application.routes';
 import { discardRouter } from './routes/discard.routes';
+import { rejectionRouter } from './routes/rejection.routes';
 import { blacklistRouter } from './routes/blacklist.routes';
 import { interviewRouter } from './routes/interview.routes';
 import { stageTypeRouter } from './routes/stageType.routes';
@@ -43,6 +44,7 @@ export function createApp(): Application {
   app.use('/api/invitations', invitationRouter);
   app.use('/api/applications', applicationRouter);
   app.use('/api/discards', discardRouter);
+  app.use('/api/rejections', rejectionRouter);
   app.use('/api/blacklist', blacklistRouter);
   app.use('/api/interviews', interviewRouter);
   app.use('/api/stage-types', stageTypeRouter);

@@ -266,10 +266,15 @@ interviewRouter.patch('/:id', requireAuth, async (req: AuthedRequest, res: Respo
           'ghosted',
           'on_hold',
         ]),
+        // Optional so a plain status change leaves any existing memo alone.
+        // Send "" to erase this status's memo; omit it to leave it untouched.
+        note: z.string().max(2000).optional(),
       })
       .safeParse(req.body);
     if (!id.success || !parsed.success) return res.status(400).json({ error: 'Invalid request' });
-    res.json(await interviewService.setStatus(id.data, parsed.data.status, req.user!.id));
+    res.json(
+      await interviewService.setStatus(id.data, parsed.data.status, req.user!.id, parsed.data.note),
+    );
   } catch (err) {
     failure(err, res, next);
   }

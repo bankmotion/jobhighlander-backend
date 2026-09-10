@@ -29,7 +29,9 @@ const listQuerySchema = z.object({
   applied: z.enum(['all', 'applied', 'unapplied']).default('all'),
   othersApplied: z.enum(['all', 'others', 'none']).default('all'),
   discarded: z.enum(['all', 'discarded', 'undiscarded']).default('all'),
-  interview: z.enum(['all', 'started', 'notstarted']).default('all'),
+  interview: z
+    .enum(['all', 'started', 'notstarted', 'active', 'offer', 'accepted', 'rejected', 'withdrawn', 'ghosted', 'on_hold'])
+    .default('all'),
   profileId: z.coerce.number().int().positive().optional(),
   // When the JOB was posted, as opposed to when we scraped it.
   //

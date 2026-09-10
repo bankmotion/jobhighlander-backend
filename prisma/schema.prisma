@@ -52,6 +52,7 @@ model Job {
   resumes      Resume[]
   applications JobApplication[]
   discards     JobDiscard[]
+  rejections   JobRejection[]
   coverLetters CoverLetter[]
   interviews   Interview[]
   aiQueries    JobAiQuery[]
@@ -205,7 +206,8 @@ model User {
 
   /// "Discarded" marks this user put on a job, same reasoning as above:
   /// a shared profile has several users, so the row records WHO dismissed it.
-  discardsMarked JobDiscard[] @relation("DiscardMarkedBy")
+  discardsMarked   JobDiscard[]   @relation("DiscardMarkedBy")
+  rejectionsMarked JobRejection[] @relation("RejectionMarkedBy")
 
   /// Interview timelines this user opened, same reasoning as the two above:
   /// a shared profile has several users, so the row records WHO started it.
@@ -459,6 +461,7 @@ model Profile {
   invitations     ProfileInvitation[]
   applications    JobApplication[]
   discards        JobDiscard[]
+  rejections      JobRejection[]
   coverLetters    CoverLetter[]
   interviews      Interview[]
   aiQueries       JobAiQuery[]
@@ -664,6 +667,51 @@ model JobApplication {
 /// PER PROFILE, not per user. The same posting is a fair fit for one candidate
 /// and wrong for the next, so discarding it while looking at one profile must
 /// not hide it from the others — the pairing is what carries the meaning.
+/// The employer said no.
+///
+/// Deliberately NOT `JobDiscard`. Those are two different facts about a posting
+/// and they are made by different people: a discard is this profile deciding a
+/// job is not a fit, a rejection is the employer deciding the candidate is not.
+/// Collapsing them would lose the distinction that matters most when reviewing
+/// a week of work — "I passed on twelve" reads nothing like "twelve passed on
+/// me". A job can carry both, and the two badges say so.
+///
+/// Keyed on (profile, job) like every other per-profile judgement here: two
+/// bidders working different profiles get rejected separately.
+model JobRejection {
+  id Int @id @default(autoincrement())
+
+  profileId Int     @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  jobId Int? @map("job_id")
+  job   Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  /// Denormalised so the record still reads once its job row is gone.
+  jobTitle   String  @map("job_title") @db.VarChar(512)
+  jobCompany String? @map("job_company") @db.VarChar(255)
+
+  /// Why. REQUIRED, unlike a discard, because that is the whole point of
+  /// recording a rejection separately — "they said no" is not worth a row on
+  /// its own, and the reason is what makes the next application better.
+  note String @db.Text
+
+  /// When the rejection happened. Separate from createdAt for the same reason
+  /// `discardedAt` is: the judgement has its own date, the row has another.
+  rejectedAt DateTime @default(now()) @map("rejected_at")
+
+  /// Which member of a shared profile recorded it.
+  rejectedById Int  @map("rejected_by_id")
+  rejectedBy   User @relation("RejectionMarkedBy", fields: [rejectedById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([profileId, jobId])
+  @@index([jobId])
+  @@map("job_rejections")
+}
+
 model JobDiscard {
   id Int @id @default(autoincrement())
 
@@ -1041,6 +1089,19 @@ model Interview {
   jobCompany String? @map("job_company") @db.VarChar(255)
 
   status InterviewStatus @default(active)
+
+  /// Optional memo per status, keyed by the status value:
+  ///   { "rejected": "no reply after the final round" }
+  ///
+  /// Keyed rather than a single column so a note cannot outlive the status it
+  /// explains. One `statusNote` would show the rejection reason on a process
+  /// later reopened as `active` — worse than no note, because it reads as
+  /// current. Keying also means flipping back to a previous status restores
+  /// what was written about it.
+  ///
+  /// Json, not a child table: it is at most seven short strings per interview,
+  /// read only alongside the row that owns it and never queried across rows.
+  statusNotes Json? @map("status_notes")
 
   /// Bumped on every step and panel write. Drives the "no movement in three
   /// weeks — probably ghosted" flag, which is a real and common outcome that
