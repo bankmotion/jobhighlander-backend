@@ -5,15 +5,15 @@
 -- not. A job can carry both, and "I passed on twelve" reads nothing like
 -- "twelve passed on me".
 --
--- `note` is NOT NULL with no default: a rejection with no reason is not worth a
--- row, and the reason is the part that makes the next application better.
+-- `note` is nullable: often there is nothing to say beyond the rejection
+-- itself, and a required reason would only collect filler.
 CREATE TABLE `job_rejections` (
   `id`             INT          NOT NULL AUTO_INCREMENT,
   `profile_id`     INT          NOT NULL,
   `job_id`         INT          NULL,
   `job_title`      VARCHAR(512) NOT NULL,
   `job_company`    VARCHAR(255) NULL,
-  `note`           TEXT         NOT NULL,
+  `note`           TEXT         NULL,
   `rejected_at`    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `rejected_by_id` INT          NOT NULL,
   `created_at`     DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),

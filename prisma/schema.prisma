@@ -691,10 +691,11 @@ model JobRejection {
   jobTitle   String  @map("job_title") @db.VarChar(512)
   jobCompany String? @map("job_company") @db.VarChar(255)
 
-  /// Why. REQUIRED, unlike a discard, because that is the whole point of
-  /// recording a rejection separately — "they said no" is not worth a row on
-  /// its own, and the reason is what makes the next application better.
-  note String @db.Text
+  /// Why, when there is a why. Optional: often there is nothing to say beyond
+  /// the rejection itself — silence after a take-home is the commonest outcome
+  /// and has no explanation to record. Forcing a sentence there would only
+  /// produce filler.
+  note String? @db.Text
 
   /// When the rejection happened. Separate from createdAt for the same reason
   /// `discardedAt` is: the judgement has its own date, the row has another.

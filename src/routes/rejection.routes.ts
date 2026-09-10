@@ -21,13 +21,13 @@ function failure(err: unknown, res: Response, next: NextFunction): void {
 rejectionRouter.post('/', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = pairing
-      // Required, and bounded. The reason is the point of the record — see the
-      // `JobRejection` model — so an empty one is a bad request, not an
-      // acceptable default.
-      .extend({ note: z.string().trim().min(1).max(2000) })
+      // Optional and bounded. Silence after an application is a real outcome
+      // with nothing to explain, so requiring a sentence would only collect
+      // filler.
+      .extend({ note: z.string().trim().max(2000).optional() })
       .safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: 'A job, a profile and a reason are required' });
+      return res.status(400).json({ error: 'A job and a profile are required' });
     }
     const { jobId, profileId, note } = parsed.data;
     res.json(await rejectionService.mark(jobId, profileId, req.user!.id, note));

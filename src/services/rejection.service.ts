@@ -3,7 +3,7 @@ import { usableProfileWhere } from './profile.service';
 
 export interface RejectionStatus {
   jobId: number;
-  note: string;
+  note: string | null;
   rejectedAt: Date;
   rejectedBy: string;
 }
@@ -33,12 +33,13 @@ export const rejectionService = {
    *
    * An existing row is UPDATED rather than left alone, which is where this
    * differs from `discardService.mark`. A discard carries no information beyond
-   * its existence, so marking twice is a no-op; a rejection carries the reason,
-   * and re-submitting is how someone corrects or expands it.
+   * its existence, so marking twice is a no-op; a rejection can carry a reason,
+   * and re-submitting is how someone adds or corrects one.
    */
-  async mark(jobId: number, profileId: number, userId: number, note: string) {
-    const trimmed = note.trim();
-    if (!trimmed) throw new RejectionError('A reason is required', 400);
+  async mark(jobId: number, profileId: number, userId: number, note?: string) {
+    // Empty and absent collapse to the same stored NULL. "No reason given" is
+    // one state, and an empty string would be a second spelling of it.
+    const trimmed = note?.trim() || null;
 
     const [profile, job] = await Promise.all([
       prisma.profile.findFirst({
