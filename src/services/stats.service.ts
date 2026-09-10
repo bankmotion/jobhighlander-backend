@@ -38,12 +38,19 @@ export interface BidPerformance {
     interviews: number;
     offers: number;
     accepted: number;
+    /// Interviews that ENDED in a rejection. A subset of `rejectedBids`, and
+    /// not the same question: this one is "got in the room and lost it".
     rejected: number;
+    /// Bids the employer turned down, from the job-level rejection record.
+    /// Counts the ones rejected before any interview too, which is most of
+    /// them — without this those bids are indistinguishable from bids still in
+    /// play, and the board reads far healthier than it is.
+    rejectedBids: number;
     discarded: number;
     companies: number;
     activeInterviews: number;
   };
-  rates: { interview: number; offer: number; accepted: number };
+  rates: { interview: number; offer: number; accepted: number; rejected: number };
   daily: { date: string; applications: number; interviews: number }[];
   funnel: { stage: FunnelStage; label: string; count: number }[];
   bySite: { site: string; applications: number; interviews: number; rate: number }[];
@@ -70,10 +77,11 @@ export interface ProfileMemberStats {
   offers: number;
   accepted: number;
   rejected: number;
+  rejectedBids: number;
   discarded: number;
   companies: number;
   activeInterviews: number;
-  rates: { interview: number; offer: number; accepted: number };
+  rates: { interview: number; offer: number; accepted: number; rejected: number };
   lastBidAt: string | null;
 }
 
@@ -89,11 +97,12 @@ export interface ProfileBidRow {
     offers: number;
     accepted: number;
     rejected: number;
+    rejectedBids: number;
     discarded: number;
     companies: number;
     activeInterviews: number;
   };
-  rates: { interview: number; offer: number; accepted: number };
+  rates: { interview: number; offer: number; accepted: number; rejected: number };
   lastBidAt: string | null;
   members: ProfileMemberStats[];
 }
@@ -108,7 +117,8 @@ export interface TeamBidder {
   interviews: number;
   offers: number;
   accepted: number;
-  rates: { interview: number; offer: number; accepted: number };
+  rejectedBids: number;
+  rates: { interview: number; offer: number; accepted: number; rejected: number };
 }
 
 export interface TeamBidPerformance {
@@ -122,11 +132,12 @@ export interface TeamBidPerformance {
     offers: number;
     accepted: number;
     rejected: number;
+    rejectedBids: number;
     discarded: number;
     companies: number;
     activeInterviews: number;
   };
-  rates: { interview: number; offer: number; accepted: number };
+  rates: { interview: number; offer: number; accepted: number; rejected: number };
   daily: { date: string; applications: number; interviews: number }[];
   bySite: { site: string; applications: number; interviews: number; rate: number }[];
   byBidder: TeamBidder[];
@@ -220,7 +231,7 @@ export const statsService = {
       return emptyResult(days, from, to, zone);
     }
 
-    const [applications, myBidsEver, interviews, discarded, memberRows] = await Promise.all([
+    const [applications, myBidsEver, interviews, rejections, discarded, memberRows] = await Promise.all([
       prisma.jobApplication.findMany({
         where: {
           profileId: { in: profileIds },
@@ -247,6 +258,14 @@ export const statsService = {
       prisma.interview.findMany({
         where: { profileId: { in: profileIds } },
         select: { profileId: true, jobId: true, status: true, createdAt: true },
+      }),
+      // Deliberately NOT windowed, for the same reason the interviews above are
+      // not: a bid sent two months ago that was turned down last week is still
+      // that bid's outcome. Windowing here would credit the rejection to a
+      // period the application does not belong to.
+      prisma.jobRejection.findMany({
+        where: { profileId: { in: profileIds } },
+        select: { profileId: true, jobId: true },
       }),
       prisma.jobDiscard.count({
         where: {
@@ -290,6 +309,13 @@ export const statsService = {
     const interviewByPair = new Map<string, (typeof interviews)[number]>();
     for (const iv of myInterviews) interviewByPair.set(key(iv.profileId, iv.jobId), iv);
 
+    // Same restriction as the interviews above: only rejections sitting on a
+    // bid THIS user sent. A colleague's rejection on their own bid for the same
+    // posting is not this user's failure.
+    const rejectedPairs = new Set(
+      rejections.filter((r) => myBidKeys.has(key(r.profileId, r.jobId))).map((r) => key(r.profileId, r.jobId)),
+    );
+
     const activeInterviews = myInterviews.filter((iv) => iv.status === 'active').length;
 
     // Site comes off the job row, so applications whose posting was deleted fall
@@ -305,6 +331,7 @@ export const statsService = {
     let offers = 0;
     let accepted = 0;
     let rejected = 0;
+    let rejectedBids = 0;
     const daily = new Map<string, { applications: number; interviews: number }>();
     const bySite = new Map<string, { applications: number; interviews: number }>();
     const byCompany = new Map<string, { company: string; applications: number; interviews: number }>();
@@ -329,6 +356,7 @@ export const statsService = {
       if (iv && OFFER_STATUSES.has(iv.status)) offers++;
       if (iv?.status === 'accepted') accepted++;
       if (iv?.status === 'rejected') rejected++;
+      if (rejectedPairs.has(key(a.profileId, a.jobId))) rejectedBids++;
 
       const d = daily.get(dayKey(a.appliedAt, zone));
       if (d) {
@@ -377,6 +405,7 @@ export const statsService = {
         offers,
         accepted,
         rejected,
+        rejectedBids,
         discarded,
         companies: byCompany.size,
         activeInterviews,
@@ -385,6 +414,7 @@ export const statsService = {
         interview: pct(converted, applied),
         offer: pct(offers, applied),
         accepted: pct(accepted, applied),
+        rejected: pct(rejectedBids, applied),
       },
       daily: [...daily.entries()].map(([date, v]) => ({ date, ...v })),
       // Monotonically decreasing by construction — each stage is a subset of the
@@ -459,7 +489,7 @@ export const statsService = {
     const byWho = bidder ? { markedById: bidder } : {};
     const discardedByWho = bidder ? { discardedById: bidder } : {};
 
-    const [allProfiles, profiles, applications, bidsEver, interviews, discards] = await Promise.all([
+    const [allProfiles, profiles, applications, bidsEver, interviews, rejections, discards] = await Promise.all([
       // Always the full set, regardless of the filter: it populates the picker,
       // which has to keep offering the other profiles once one is chosen.
       prisma.profile.findMany({
@@ -494,6 +524,12 @@ export const statsService = {
       prisma.interview.findMany({
         where: only,
         select: { profileId: true, jobId: true, status: true },
+      }),
+      // Unwindowed like the interviews: a rejection belongs to the bid it
+      // answers, not to the week it arrived in.
+      prisma.jobRejection.findMany({
+        where: only,
+        select: { profileId: true, jobId: true },
       }),
       prisma.jobDiscard.findMany({
         where: { discardedAt: { gte: from, lte: to }, ...only, ...discardedByWho },
@@ -556,6 +592,9 @@ export const statsService = {
     }
     const bySiteAll = new Map<string, { applications: number; interviews: number }>();
 
+    // Which (profile, job) pairs the employer turned down.
+    const rejectedPairs = new Set(rejections.map((r) => pairKey(r.profileId, r.jobId)));
+
     const profileRows: ProfileBidRow[] = profiles.map((p) => {
       const members = dedupeUsers([
         p.owner,
@@ -569,7 +608,7 @@ export const statsService = {
         const mine = appsByMember.get(k) ?? [];
         const everPairs = bidPairsByMember.get(k) ?? new Set<string>();
 
-        let interviewsWon = 0, offers = 0, accepted = 0, rejected = 0;
+        let interviewsWon = 0, offers = 0, accepted = 0, rejected = 0, rejectedBids = 0;
         const companies = new Set<string>();
         let lastBidAt: Date | null = null;
 
@@ -581,6 +620,7 @@ export const statsService = {
             if (iv.status === 'accepted') accepted++;
             if (iv.status === 'rejected') rejected++;
           }
+          if (rejectedPairs.has(pairKey(a.profileId, a.jobId))) rejectedBids++;
           const label = (a.jobCompany ?? '').trim();
           if (label) companies.add(label.toLowerCase());
           if (!lastBidAt || a.appliedAt > lastBidAt) lastBidAt = a.appliedAt;
@@ -603,6 +643,7 @@ export const statsService = {
           offers,
           accepted,
           rejected,
+          rejectedBids,
           discarded: discardsByMember.get(k) ?? 0,
           companies: companies.size,
           activeInterviews,
@@ -610,6 +651,7 @@ export const statsService = {
             interview: pct(interviewsWon, applied),
             offer: pct(offers, applied),
             accepted: pct(accepted, applied),
+            rejected: pct(rejectedBids, applied),
           },
           lastBidAt: lastBidAt ? (lastBidAt as Date).toISOString() : null,
         } satisfies ProfileMemberStats;
@@ -619,7 +661,7 @@ export const statsService = {
       // summing members: a bid whose author was deleted still belongs to the
       // profile, and summing members would quietly drop it.
       const profileApps = applications.filter((a) => a.profileId === p.id);
-      let pInterviews = 0, pOffers = 0, pAccepted = 0, pRejected = 0;
+      let pInterviews = 0, pOffers = 0, pAccepted = 0, pRejected = 0, pRejectedBids = 0;
       const pCompanies = new Set<string>();
       let pLast: Date | null = null;
 
@@ -631,6 +673,7 @@ export const statsService = {
           if (iv.status === 'accepted') pAccepted++;
           if (iv.status === 'rejected') pRejected++;
         }
+        if (rejectedPairs.has(pairKey(a.profileId, a.jobId))) pRejectedBids++;
         const label = (a.jobCompany ?? '').trim();
         if (label) pCompanies.add(label.toLowerCase());
         if (!pLast || a.appliedAt > pLast) pLast = a.appliedAt;
@@ -656,6 +699,7 @@ export const statsService = {
           offers: pOffers,
           accepted: pAccepted,
           rejected: pRejected,
+          rejectedBids: pRejectedBids,
           discarded: discards.filter((d) => d.profileId === p.id).length,
           companies: pCompanies.size,
           activeInterviews: interviews.filter(
@@ -666,6 +710,7 @@ export const statsService = {
           interview: pct(pInterviews, applied),
           offer: pct(pOffers, applied),
           accepted: pct(pAccepted, applied),
+          rejected: pct(pRejectedBids, applied),
         },
         lastBidAt: pLast ? (pLast as Date).toISOString() : null,
         members: members.sort((a, b) => b.applications - a.applications || a.email.localeCompare(b.email)),
@@ -679,14 +724,15 @@ export const statsService = {
       for (const m of row.members) {
         const cur = byBidder.get(m.userId) ?? {
           userId: m.userId, email: m.email, role: m.role,
-          profiles: 0, applications: 0, interviews: 0, offers: 0, accepted: 0,
-          rates: { interview: 0, offer: 0, accepted: 0 },
+          profiles: 0, applications: 0, interviews: 0, offers: 0, accepted: 0, rejectedBids: 0,
+          rates: { interview: 0, offer: 0, accepted: 0, rejected: 0 },
         };
         cur.profiles++;
         cur.applications += m.applications;
         cur.interviews += m.interviews;
         cur.offers += m.offers;
         cur.accepted += m.accepted;
+        cur.rejectedBids += m.rejectedBids;
         byBidder.set(m.userId, cur);
       }
     }
@@ -695,6 +741,7 @@ export const statsService = {
         interview: pct(b.interviews, b.applications),
         offer: pct(b.offers, b.applications),
         accepted: pct(b.accepted, b.applications),
+        rejected: pct(b.rejectedBids, b.applications),
       };
     }
 
@@ -705,11 +752,12 @@ export const statsService = {
         acc.offers += r.totals.offers;
         acc.accepted += r.totals.accepted;
         acc.rejected += r.totals.rejected;
+        acc.rejectedBids += r.totals.rejectedBids;
         acc.discarded += r.totals.discarded;
         acc.activeInterviews += r.totals.activeInterviews;
         return acc;
       },
-      { applications: 0, interviews: 0, offers: 0, accepted: 0, rejected: 0, discarded: 0, activeInterviews: 0 },
+      { applications: 0, interviews: 0, offers: 0, accepted: 0, rejected: 0, rejectedBids: 0, discarded: 0, activeInterviews: 0 },
     );
 
     return {
@@ -727,6 +775,7 @@ export const statsService = {
         interview: pct(grand.interviews, grand.applications),
         offer: pct(grand.offers, grand.applications),
         accepted: pct(grand.accepted, grand.applications),
+        rejected: pct(grand.rejectedBids, grand.applications),
       },
       daily: [...daily.entries()].map(([date, v]) => ({ date, ...v })),
       bySite: [...bySiteAll.entries()]
@@ -813,8 +862,8 @@ function emptyResult(days: number, from: Date, to: Date, zone: string): BidPerfo
   }
   return {
     range: { days, from: from.toISOString(), to: to.toISOString() },
-    totals: { applications: 0, interviews: 0, offers: 0, accepted: 0, rejected: 0, discarded: 0, companies: 0, activeInterviews: 0 },
-    rates: { interview: 0, offer: 0, accepted: 0 },
+    totals: { applications: 0, interviews: 0, offers: 0, accepted: 0, rejected: 0, rejectedBids: 0, discarded: 0, companies: 0, activeInterviews: 0 },
+    rates: { interview: 0, offer: 0, accepted: 0, rejected: 0 },
     daily,
     funnel: [
       { stage: 'applied', label: 'Applied', count: 0 },
