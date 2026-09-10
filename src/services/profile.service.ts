@@ -90,6 +90,11 @@ const summarySelect = {
   lastName: true,
   location: true,
   updatedAt: true,
+  // Carried on the summary so the Resume tab can prefill it without a second
+  // request. Capped at a few thousand characters and only ever a handful of
+  // profiles per user, so it costs less than the round trip would; if profile
+  // counts ever grow this is the first field to move behind its own endpoint.
+  customPrompt: true,
   owner: { select: { id: true, email: true, role: true } },
   _count: { select: { workExperiences: true, educations: true } },
   // Who else can use this profile. Both ACCEPTED and PENDING are returned:

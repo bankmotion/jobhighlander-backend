@@ -224,6 +224,9 @@ model User {
   /// Prompts this super admin last edited.
   promptsEdited Prompt[]
 
+  /// Custom-prompt reviews this admin ran.
+  promptChecksRun ProfilePromptCheck[] @relation("PromptCheckedBy")
+
   /// Anthropic calls made on this user's behalf, for cost attribution.
   aiUsage AiUsage[]
 
@@ -238,12 +241,12 @@ model User {
   balanceMicroUsd Int @default(0) @map("balance_micro_usd")
 
   /// Every movement of this user's balance.
-  creditEntries CreditEntry[] @relation("CreditOwner")
+  creditEntries  CreditEntry[] @relation("CreditOwner")
   /// Credits this super admin granted to somebody.
   creditsGranted CreditEntry[] @relation("CreditCreatedBy")
 
   /// Deposits this user says they made.
-  topUpRequests TopUpRequest[] @relation("TopUpRequester")
+  topUpRequests  TopUpRequest[] @relation("TopUpRequester")
   /// Deposit claims this super admin ruled on.
   topUpsReviewed TopUpRequest[] @relation("TopUpReviewer")
 
@@ -279,7 +282,7 @@ model TopUpRequest {
   chain  CryptoChain
   /// The transaction hash as pasted. Kept verbatim — normalising case would
   /// make it harder to paste back into an explorer.
-  txHash String @map("tx_hash") @db.VarChar(120)
+  txHash String      @map("tx_hash") @db.VarChar(120)
 
   /// What the user says they sent, in micro-USD. Advisory only.
   claimedMicroUsd Int @map("claimed_micro_usd")
@@ -440,6 +443,15 @@ model Profile {
   /// rather than break every resume that referenced it.
   defaultTemplateKey String? @map("default_template_key") @db.VarChar(64)
 
+  /// This profile's HOUSE STYLE ADDENDUM: extra drafting guidance appended to
+  /// the application system prompt whenever a resume is generated for it.
+  ///
+  /// SUB, NOT MAIN. `prompts['application.system']` still owns the output
+  /// contract, the fixed facts and the marking rules, and that prompt tells
+  /// the model to ignore anything here that reaches past them. Null and empty
+  /// mean the same thing — no addendum block is sent at all, because an empty
+  /// labelled block reads to the model as a deliberate silence.
+  customPrompt String? @map("custom_prompt") @db.Text
 
   workExperiences WorkExperience[]
   educations      Education[]
@@ -451,6 +463,7 @@ model Profile {
   interviews      Interview[]
   aiQueries       JobAiQuery[]
   blacklist       CompanyBlacklist[]
+  promptChecks    ProfilePromptCheck[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -579,6 +592,15 @@ model Resume {
   templateKey String @default("classic-ats") @map("template_key") @db.VarChar(64)
   /// Which model produced it, so a later prompt change can find stale rows.
   model       String @db.VarChar(64)
+
+  /// The HOUSE STYLE ADDENDUM that was in force when this was written, copied
+  /// in full rather than referenced.
+  ///
+  /// A SNAPSHOT, deliberately: the profile's `customPrompt` moves on, and a
+  /// foreign key would quietly rewrite the history of what produced this
+  /// document every time an admin edited it. Null means none was sent — which
+  /// is also what every row written before the feature existed says.
+  customPrompt String? @map("custom_prompt") @db.Text
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -717,6 +739,11 @@ model CoverLetter {
   /// Which model produced it, so a later prompt change can find stale rows.
   model String @db.VarChar(64)
 
+  /// The addendum in force when this was written. One model call writes the
+  /// resume and the letter together, so both rows carry the same snapshot for
+  /// the same reason — see `Resume.customPrompt`.
+  customPrompt String? @map("custom_prompt") @db.Text
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -754,6 +781,53 @@ model Prompt {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("prompts")
+}
+
+/// One AI review of a profile's custom prompt.
+///
+/// The check answers a question the admin cannot answer by reading: which of
+/// their instructions the main prompt will actually let through, and which it
+/// will ignore. It is ADVISORY. Nothing here is enforced at generation time —
+/// the addendum is sent exactly as saved, and stripping it automatically would
+/// mean an AI silently editing an admin's stored configuration.
+///
+/// A history table rather than columns on `profiles`, because the useful
+/// question is "did my edit fix it?", and answering that needs the previous
+/// verdict to still exist. The newest row for a profile is the current one.
+model ProfilePromptCheck {
+  id Int @id @default(autoincrement())
+
+  profileId Int     @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  /// The EXACT text reviewed. Snapshotted for the same reason the resume
+  /// snapshots it: the profile's prompt moves on, and a row that says "this
+  /// was clean" has to keep saying what it was looking at when it said so.
+  content String @db.Text
+
+  /// clean | partial | conflicts. A plain string, not an enum: the checker's
+  /// vocabulary lives in a prompt that a super admin can edit without a
+  /// migration, so the column must not be the thing that constrains it.
+  verdict String @db.VarChar(16)
+
+  /// One line for the tab strip, before anything is expanded.
+  summary String @db.Text
+
+  /// The per-instruction findings, shaped by `promptCheckSchema`. Json rather
+  /// than a child table: a short list, read only alongside its own check.
+  findings Json
+
+  /// Which model reviewed it. A verdict is only as good as the model that gave
+  /// it, and the two must not drift apart.
+  model String @db.VarChar(64)
+
+  checkedById Int?  @map("checked_by_id")
+  checkedBy   User? @relation("PromptCheckedBy", fields: [checkedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([profileId, createdAt])
+  @@map("profile_prompt_checks")
 }
 
 /// A named, admin-curatable combination of the render parameters.

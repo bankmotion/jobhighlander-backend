@@ -7,6 +7,8 @@ export const previewRequestSchema = z.object({
   profileId: z.coerce.number().int().positive(),
   notes: z.string().trim().max(20_000).optional().default(''),
   provider: z.enum(AI_PROVIDERS).optional(),
+  /** See `customPromptField` in generation.schema.ts for what absent vs "" mean. */
+  customPrompt: z.string().max(6_000).optional(),
 });
 
 export type PreviewRequest = z.infer<typeof previewRequestSchema>;

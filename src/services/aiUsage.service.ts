@@ -23,11 +23,17 @@ import {
   zonedHourKey,
 } from '../lib/zone';
 
-export type AiFeature = 'application' | 'job_query' | 'resume' | 'cover_letter';
+export type AiFeature =
+  | 'application'
+  | 'job_query'
+  | 'prompt_check'
+  | 'resume'
+  | 'cover_letter';
 
 const FEATURE_LABELS: Record<AiFeature, string> = {
   application: 'Resume + cover letter',
   job_query: 'Ask AI about a job',
+  prompt_check: 'Custom prompt review',
   resume: 'Resume (legacy, separate call)',
   cover_letter: 'Cover letter (legacy, separate call)',
 };

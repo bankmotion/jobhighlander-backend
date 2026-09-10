@@ -74,8 +74,10 @@ export async function saveResume(input: {
   job: { title: string; company: string | null };
   data: object;
   model: string;
+  /** The addendum that produced it, frozen onto the row. Null when none. */
+  customPrompt?: string | null;
 }): Promise<boolean> {
-  const { profileId, jobId, userId, job, data, model } = input;
+  const { profileId, jobId, userId, job, data, model, customPrompt = null } = input;
 
   try {
     // The profile's CURRENT template. Read as the raw key rather than through
@@ -96,11 +98,11 @@ export async function saveResume(input: {
       where: { profileId_jobId: { profileId, jobId } },
       create: {
         profileId, jobId, jobTitle: job.title, jobCompany: job.company,
-        data: data as never, model,
+        data: data as never, model, customPrompt,
         templateKey: resolvedKey,
       },
       update: {
-        data: data as never, model,
+        data: data as never, model, customPrompt,
         jobTitle: job.title, jobCompany: job.company,
         // Regeneration rebuilds the document from the profile as it stands NOW,
         // so it picks up a template changed since the first run. Without this

@@ -10,6 +10,14 @@ export const PROMPT_KEYS = {
       'the tailored resume and the cover letter together, so this text governs ' +
       'both and the consistency between them.',
   },
+  'prompt.check.system': {
+    name: 'Custom prompt review',
+    description:
+      'Reads an admin’s custom prompt and reports which of their instructions ' +
+      'the application prompt will let through and which it will ignore. It is ' +
+      'sent the application prompt itself, not a summary of it, so editing that ' +
+      'text above changes what this flags without a second edit here.',
+  },
   'job.query.system': {
     name: 'Ask AI about a job',
     description:

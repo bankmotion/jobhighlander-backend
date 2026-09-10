@@ -18,6 +18,7 @@ import { statsRouter } from './routes/stats.routes';
 import { resumeRouter } from './routes/resume.routes';
 import { coverLetterRouter } from './routes/coverLetter.routes';
 import { promptRouter } from './routes/prompt.routes';
+import { profilePromptRouter } from './routes/profilePrompt.routes';
 import { aiUsageRouter } from './routes/aiUsage.routes';
 import { aiRouter } from './routes/ai.routes';
 import { billingRouter } from './routes/billing.routes';
@@ -52,6 +53,7 @@ export function createApp(): Application {
   app.use('/api/resumes', resumeRouter);
   app.use('/api/cover-letters', coverLetterRouter);
   app.use('/api/prompts', promptRouter);
+  app.use('/api/profile-prompts', profilePromptRouter);
   app.use('/api/ai-usage', aiUsageRouter);
   app.use('/api/ai', aiRouter);
   app.use('/api/billing', billingRouter);

@@ -129,16 +129,18 @@ export const coverLetterService = {
     body: string;
     reviewNotes: string[];
     model: string;
+    /** The addendum that produced it. See `Resume.customPrompt`. */
+    customPrompt?: string | null;
   }): Promise<StoredCoverLetter> {
-    const { profileId, jobId, job, body, reviewNotes, model } = input;
+    const { profileId, jobId, job, body, reviewNotes, model, customPrompt = null } = input;
     const row = await prisma.coverLetter.upsert({
       where: { profileId_jobId: { profileId, jobId } },
       create: {
         profileId, jobId, jobTitle: job.title, jobCompany: job.company,
-        body, reviewNotes: reviewNotes as never, model,
+        body, reviewNotes: reviewNotes as never, model, customPrompt,
       },
       update: {
-        body, reviewNotes: reviewNotes as never, model, edited: false,
+        body, reviewNotes: reviewNotes as never, model, customPrompt, edited: false,
         jobTitle: job.title, jobCompany: job.company,
       },
       select: { body: true, reviewNotes: true, edited: true, model: true, updatedAt: true },

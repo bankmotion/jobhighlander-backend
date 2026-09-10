@@ -10,6 +10,7 @@ import { saveResume, ResumeInputError, periodOf, yearsOf, profileIdentity } from
 import { assembleLetter, coverLetterService, type StoredCoverLetter } from './coverLetter.service';
 import { applicationDraftSchema, type ApplicationRequest } from '../schemas/generation.schema';
 import { sanitizeResume, sanitizeLetter, writeExperienceYears } from '../resume/sanitize';
+import { addendumBlock } from '../schemas/promptCheck.schema';
 import type { TailoredResume } from '../schemas/resume.schema';
 
 export interface GeneratedApplication {
@@ -24,7 +25,7 @@ export interface GeneratedApplication {
 
 export const generationService = {
   async generate(
-    { jobId, profileId, notes, provider }: ApplicationRequest,
+    { jobId, profileId, notes, provider, customPrompt }: ApplicationRequest,
     userId: number,
   ): Promise<GeneratedApplication> {
     // Resolved before anything is read: a provider this server cannot call is a
@@ -53,6 +54,17 @@ export const generationService = {
     // billable call. 403, not 404 — the profile is theirs to see, it just may
     // not spend.
     await assertFunded(profileId, userId);
+
+    // The addendum in force for this generation. The request wins when it
+    // carries one, because the Resume tab prefills the profile's text and lets
+    // it be tuned for a single posting; falling back to the stored value is
+    // what makes it work for a bidder whose client never opens that field.
+    //
+    // `undefined` means "not sent" and falls back. An empty string means the
+    // user deliberately cleared it, and must NOT resurrect the profile default.
+    const addendum =
+      customPrompt === undefined ? (profile.customPrompt ?? '') : customPrompt;
+    const addendumSystem = addendumBlock(addendum);
 
     const { name, contact } = profileIdentity(profile);
 
@@ -124,7 +136,16 @@ Produce the tailored resume and the cover letter paragraphs now.`;
     // in the cacheable prefix on both providers.
     const call = await structuredCall({
       provider: chosen,
-      system: [await promptService.text('application.system'), candidateBlock],
+      // The addendum sits BETWEEN the main prompt and the candidate record: the
+      // main prompt stays the stable cacheable prefix, and the policy governing
+      // the addendum is the last thing read before the addendum itself. No
+      // block at all when there is none — an empty labelled block reads as a
+      // deliberate silence, the same trap the notes block avoids above.
+      system: [
+        await promptService.text('application.system'),
+        ...(addendumSystem ? [addendumSystem] : []),
+        candidateBlock,
+      ],
       user: jobBlock,
       schema: applicationDraftSchema,
       schemaName: 'tailored_application',
@@ -160,6 +181,7 @@ Produce the tailored resume and the cover letter paragraphs now.`;
     // payload; the letter's own upsert is the authoritative copy either way.
     const saved = await saveResume({
       profileId, jobId, userId, job, data: resume as object, model: call.model,
+      customPrompt: addendumSystem ? addendum : null,
     });
 
     const stored = await coverLetterService.persist({
@@ -173,6 +195,9 @@ Produce the tailored resume and the cover letter paragraphs now.`;
       }),
       reviewNotes: coverLetter.reviewNotes,
       model: call.model,
+      // Same snapshot on both rows: one call wrote them, so one addendum is
+      // responsible for both, and neither should be traceable without the other.
+      customPrompt: addendumSystem ? addendum : null,
     });
 
     logger.info('Application generated', {
@@ -181,6 +206,7 @@ Produce the tailored resume and the cover letter paragraphs now.`;
       provider: chosen,
       model: call.model,
       usage: call.usage,
+      customPrompt: Boolean(addendumSystem),
       gaps: resume.gaps.length,
       resumeReviewNotes: resume.reviewNotes.length,
       letterParagraphs: coverLetter.paragraphs.length,
