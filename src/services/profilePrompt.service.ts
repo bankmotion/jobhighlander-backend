@@ -5,7 +5,7 @@ import { logger } from './logger.service';
 import { promptService } from './prompt.service';
 import { aiUsageService } from './aiUsage.service';
 import { billingService } from './billing.service';
-import { ResumeInputError } from './resume.service';
+import { ResumeInputError, periodOf, yearsOf, yearsOfWorkFrom } from './resume.service';
 import {
   promptCheckSchema,
   sanitizeCustomPrompt,
@@ -198,12 +198,51 @@ export const profilePromptService = {
 
     const profile = await prisma.profile.findFirst({
       where: { id: profileId, ...ownedWhere(userId) },
-      select: { id: true, customPrompt: true },
+      select: {
+        id: true,
+        customPrompt: true,
+        // The record the addendum will actually be applied to. Without it the
+        // review can only check the addendum against the rules, and passes an
+        // instruction like "lead with the retail role" as clean for a candidate
+        // who has never worked in retail — the single most useful thing it
+        // could have caught.
+        workExperiences: {
+          orderBy: { sortOrder: 'asc' as const },
+          select: { company: true, location: true, startDate: true, endDate: true },
+        },
+        educations: {
+          orderBy: { sortOrder: 'asc' as const },
+          select: {
+            degree: true, university: true,
+            startDate: true, endDate: true, datePrecision: true,
+          },
+        },
+      },
     });
     if (!profile) throw new ResumeInputError('Profile not found', 404);
 
     const content = sanitizeCustomPrompt(profile.customPrompt ?? '');
     if (!content) throw new ResumeInputError('There is no custom prompt to review.', 400);
+
+    const employment = profile.workExperiences
+      .map((w) => '- ' + (w.company ?? '(not recorded)') + (w.location ? ', ' + w.location : '') +
+        ' — ' + periodOf(w.startDate, w.endDate))
+      .join('\n');
+    const education = profile.educations
+      .map((e) => '- ' + [e.degree, e.university].filter(Boolean).join(', ') + ' — ' +
+        (e.datePrecision === 'year' ? yearsOf(e.startDate, e.endDate) : periodOf(e.startDate, e.endDate)))
+      .join('\n');
+    const record = [
+      'THE CANDIDATE RECORD THIS ADDENDUM WILL BE APPLIED TO',
+      '',
+      'Employment history:',
+      employment || '(none recorded)',
+      '',
+      'Total years of work: ' + (yearsOfWorkFrom(profile.workExperiences) || '(not derivable)'),
+      '',
+      'Education:',
+      education || '(none recorded)',
+    ].join('\n');
 
     const payerId = await billingService.payerFor(profileId, userId);
     const { canSpend, balanceUsd } = await billingService.balanceOf(payerId);
@@ -226,7 +265,11 @@ export const profilePromptService = {
     const call = await structuredCall({
       provider: chosen,
       system: [reviewer, `THE APPLICATION SYSTEM PROMPT, IN FULL:\n\n${application}`],
-      user: `THE ADDENDUM TO REVIEW:\n\n"""\n${content}\n"""`,
+      // The record rides in the USER message, not a third system block: the
+      // two system blocks are then byte-identical for every check anyone
+      // runs, so the cached prefix is shared across all admins rather than
+      // being fragmented per profile.
+      user: `${record}\n\nTHE ADDENDUM TO REVIEW:\n\n"""\n${content}\n"""`,
       schema: promptCheckSchema,
       schemaName: 'prompt_check',
       maxTokens: 4_000,

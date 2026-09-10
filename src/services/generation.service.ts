@@ -6,7 +6,14 @@ import { promptService } from './prompt.service';
 import { aiUsageService } from './aiUsage.service';
 import { usableProfileWhere } from './profile.service';
 import { billingService } from './billing.service';
-import { saveResume, ResumeInputError, periodOf, yearsOf, profileIdentity } from './resume.service';
+import {
+  saveResume,
+  ResumeInputError,
+  periodOf,
+  yearsOf,
+  yearsOfWorkFrom,
+  profileIdentity,
+} from './resume.service';
 import { assembleLetter, coverLetterService, type StoredCoverLetter } from './coverLetter.service';
 import { applicationDraftSchema, type ApplicationRequest } from '../schemas/generation.schema';
 import { sanitizeResume, sanitizeLetter, writeExperienceYears } from '../resume/sanitize';
@@ -68,15 +75,7 @@ export const generationService = {
 
     const { name, contact } = profileIdentity(profile);
 
-    const spans = profile.workExperiences.filter((w) => w.startDate);
-    const earliest = spans.length ? Math.min(...spans.map((w) => w.startDate!.getTime())) : null;
-    const latest = spans.length
-      ? Math.max(...spans.map((w) => (w.endDate ?? new Date()).getTime()))
-      : null;
-    const yearsOfWork =
-      earliest !== null && latest !== null && latest > earliest
-        ? Math.floor((latest - earliest) / (365.25 * 24 * 60 * 60 * 1000))
-        : 0;
+    const yearsOfWork = yearsOfWorkFrom(profile.workExperiences);
 
     const employment = profile.workExperiences
       .map((w) => `- ${w.company ?? '(company not recorded)'}${w.location ? `, ${w.location}` : ''} — ${periodOf(w.startDate, w.endDate)}`)
@@ -169,10 +168,18 @@ Produce the tailored resume and the cover letter paragraphs now.`;
     // The prompt asks for this and the model mostly complies; this is what makes
     // it certain, and it runs before BOTH documents so the two cannot disagree.
     const { resume } = sanitizeResume(call.output);
-    // The prompt asks for "10+ years"; this is what makes it certain. Applied
-    // to the summary alone, because that is the one sentence that states the
-    // career span — a "five years" inside a bullet is describing something else.
+    // The prompt asks for the computed figure; this is what makes it certain.
+    // Applied to the summary alone, because that is the one sentence that states
+    // the career span — a "five years" inside a bullet is describing something
+    // else. Logged when it actually changes the text: a model overstating the
+    // span is worth seeing in the logs, not silently repaired every time.
+    const claimedSummary = resume.summary;
     resume.summary = writeExperienceYears(resume.summary, yearsOfWork);
+    if (claimedSummary !== resume.summary) {
+      logger.warn('Rewrote the years-of-experience claim', {
+        profileId, jobId, yearsOfWork,
+      });
+    }
     // The letter goes through a STRICTER pass: it is pasted into an email as
     // plain text, so it keeps no tags at all, while the resume keeps its <b>.
     const coverLetter = sanitizeLetter(call.output.coverLetter);

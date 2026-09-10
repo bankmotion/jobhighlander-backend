@@ -16,11 +16,14 @@ export const promptCheckFindingSchema = z4.object({
         'Never paraphrased: they need to find it in their own text.',
     ),
   effect: z4
-    .enum(['ignored', 'weakened', 'reinterpreted'])
+    .enum(['ignored', 'weakened', 'reinterpreted', 'inapplicable'])
     .describe(
       'ignored = the application prompt forbids it and it changes nothing. ' +
         'weakened = it lands, but a rule above it caps how far. ' +
-        'reinterpreted = it lands, but not as written.',
+        'reinterpreted = it lands, but not as written. ' +
+        'inapplicable = nothing is stopping it, but the candidate record has ' +
+        'nothing for it to act on — it names a role, employer or career shape ' +
+        'this person does not have.',
     ),
   reason: z4
     .string()

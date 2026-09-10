@@ -31,6 +31,27 @@ export function periodOf(start: Date | null, end: Date | null): string {
   return `${start ? fmt(start) : '?'} – ${end ? fmt(end) : 'Present'}`;
 }
 
+/**
+ * Whole years from the earliest start to the latest end, ongoing roles counting
+ * to today.
+ *
+ * Shared rather than inlined because two callers state this number to a model:
+ * the generator gives it as a FIXED FACT, and the prompt reviewer needs the
+ * same figure to judge an addendum that talks about seniority. Two copies of
+ * this arithmetic would eventually disagree, and the disagreement would show up
+ * as a reviewer calling a claim fine that the generator then rewrites.
+ */
+export function yearsOfWorkFrom(
+  roles: { startDate: Date | null; endDate: Date | null }[],
+): number {
+  const spans = roles.filter((r) => r.startDate);
+  if (!spans.length) return 0;
+  const earliest = Math.min(...spans.map((r) => r.startDate!.getTime()));
+  const latest = Math.max(...spans.map((r) => (r.endDate ?? new Date()).getTime()));
+  if (latest <= earliest) return 0;
+  return Math.floor((latest - earliest) / (365.25 * 24 * 60 * 60 * 1000));
+}
+
 export function yearsOf(start: Date | null, end: Date | null): string {
   if (!start && !end) return '';
   const y = (d: Date) => String(d.getUTCFullYear());

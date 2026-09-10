@@ -25,25 +25,41 @@ const NUMBER_WORDS: Record<string, number> = {
 };
 
 /**
- * Rewrites the years-of-experience mention to the canonical "10+ years".
+ * Force the years-of-experience claim to the span the employment dates support.
  *
- * Deliberately conservative: it only rewrites a figure that ALREADY equals the
- * span computed from the employment dates. So it can normalise the wording but
- * can never change the number, and cannot touch an unrelated quantity such as
- * "a five year engagement". Anything it does not recognise is left as written.
+ * THE FIRST recognisable "N years" in the summary is the career-span claim, and
+ * it is rewritten to the canonical form whatever number the model chose. Later
+ * mentions are left alone: those are sub-spans ("five years leading teams"),
+ * and rewriting them would replace a true statement with a false one.
  *
- * This exists because the prompt alone is not a guarantee. The instruction is
- * followed most of the time, and "most of the time" is not good enough for a
- * document someone sends to an employer.
+ * This used to rewrite only a figure that ALREADY equalled the computed span,
+ * on the reasoning that it could then never corrupt an unrelated quantity. The
+ * effect was that it normalised the wording of numbers that were already right
+ * and silently passed through every number that was wrong — the only case that
+ * mattered. A profile whose dates support six years shipped resumes claiming
+ * ten. Restricting the correction to the FIRST mention answers the original
+ * worry without keeping the hole.
+ *
+ * An unparseable quantity ("many years") is left as written: it overstates
+ * nothing specific, and there is no number to disagree with.
+ *
+ * This exists because the prompt alone is not a guarantee. The candidate block
+ * states the figure as a fixed fact and the instruction is followed most of the
+ * time, and "most of the time" is not good enough for a document someone sends
+ * to an employer.
  */
 export function writeExperienceYears(text: string, years: number): string {
   if (!years || !Number.isFinite(years)) return text;
   const canonical = `${years}+ years`;
+  let claimed = false;
   return text.replace(
     /\b(?:(?:over|more than|at least|nearly|around|about)\s+)?([a-z]+|\d{1,2})\+?\s+years\b/gi,
     (match, token: string) => {
       const value = /^\d+$/.test(token) ? Number(token) : NUMBER_WORDS[token.toLowerCase()];
-      return value === years ? canonical : match;
+      if (value === undefined || !Number.isFinite(value)) return match;
+      if (claimed) return match;
+      claimed = true;
+      return canonical;
     },
   );
 }
