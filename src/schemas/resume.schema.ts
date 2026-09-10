@@ -18,11 +18,10 @@ const bullet = z4.object({
   text: z4
     .string()
     .describe(
-      'One achievement. Open with a specific action verb, NOT bolded — every ' +
-        'bullet starts with one, so bolding it distinguishes nothing and gives ' +
-        'the whole section a heavy left edge. Wrap AT MOST TWO things in <b>: ' +
-        'the technology or the number that carries the point. Bold nothing when ' +
-        'nothing in the bullet is worth singling out. <b> is the ONLY tag ' +
+      'One achievement. Open with an action verb wrapped in <b> tags, and wrap ' +
+        'the technologies and metrics that matter in <b> too. THE HOUSE STYLE ' +
+        'ADDENDUM MAY OVERRIDE THIS EMPHASIS: when it asks for less bold, or ' +
+        'for the opening verb left plain, follow it. <b> is the ONLY tag ' +
         'allowed anywhere; any other markup is printed literally.',
     ),
   inferred: z4.boolean().describe(INFERRED),
@@ -76,8 +75,9 @@ export const tailoredResumeSchema = z4.object({
       '4 to 5 sentences aimed at THIS posting: seniority and discipline, the ' +
         'years the employment dates actually support, the technologies the ' +
         'posting names, one measurable outcome, and one sentence on ownership. ' +
-        'Wrap 3 to 5 of the highest-value terms in <b> tags — enough to guide ' +
-        'a skim, few enough that the emphasis still means something.',
+        'Wrap 10 to 15 of the highest-value terms in <b> tags, unless the house ' +
+        'style addendum asks for a different density — that count overrides ' +
+        'this one.',
     ),
   skills: z4
     .array(skill)
