@@ -12,6 +12,10 @@ export type AppliedFilter = 'all' | 'applied' | 'unapplied';
 
 export type DiscardedFilter = 'all' | 'discarded' | 'undiscarded';
 
+// Whether the employer rejected this profile's application. Per PROFILE, like
+// the rest: a colleague's rejection on a shared board is not this reader's.
+export type RejectedFilter = 'all' | 'rejected' | 'notrejected';
+
 // Whether an interview timeline has been opened for the pairing, or which
 // status it is in. Per PROFILE, like applied and discarded: an interview
 // belongs to the profile that got it.
@@ -60,6 +64,7 @@ export interface ListJobsParams {
    */
   includeAppliedCount?: boolean;
   discarded?: DiscardedFilter;
+  rejected?: RejectedFilter;
   interview?: InterviewFilter;
   resume?: ResumeFilter;
   /**
@@ -272,6 +277,15 @@ export const jobService = {
           ? { discards: { some: { profileId } } }
           : { discards: { none: { profileId } } };
 
+    // Same shape as the discard filter, and ignored without a profile for the
+    // same reason: a rejection belongs to the profile that was rejected.
+    const rejectedWhere: Prisma.JobWhereInput =
+      !profileId || !params.rejected || params.rejected === 'all'
+        ? {}
+        : params.rejected === 'rejected'
+          ? { rejections: { some: { profileId } } }
+          : { rejections: { none: { profileId } } };
+
     // Same shape as the two above, and ignored without a profile for the same
     // reason: there is nothing to have an interview AS.
     const interviewWhere: Prisma.JobWhereInput =
@@ -308,6 +322,7 @@ export const jobService = {
       ...appliedWhere,
       ...othersAppliedWhere(params),
       ...discardedWhere,
+      ...rejectedWhere,
       ...interviewWhere,
       ...resumeWhere,
       // Everything at or below the pin. Applied to the count as well as the
@@ -415,6 +430,13 @@ export const jobService = {
           ? { discards: { some: { profileId } } }
           : { discards: { none: { profileId } } };
 
+    const rejectedWhere: Prisma.JobWhereInput =
+      !profileId || !params.rejected || params.rejected === 'all'
+        ? {}
+        : params.rejected === 'rejected'
+          ? { rejections: { some: { profileId } } }
+          : { rejections: { none: { profileId } } };
+
     const interviewWhere: Prisma.JobWhereInput =
       !profileId || !params.interview || params.interview === 'all'
         ? {}
@@ -447,6 +469,7 @@ export const jobService = {
         ...appliedWhere,
         ...othersAppliedWhere(params),
         ...discardedWhere,
+        ...rejectedWhere,
         ...interviewWhere,
         ...resumeWhere,
         ...(q
