@@ -10,6 +10,7 @@ import { applicationRouter } from './routes/application.routes';
 import { discardRouter } from './routes/discard.routes';
 import { rejectionRouter } from './routes/rejection.routes';
 import { grantRouter } from './routes/grant.routes';
+import { jobStatusRouter } from './routes/jobStatus.routes';
 import { blacklistRouter } from './routes/blacklist.routes';
 import { interviewRouter } from './routes/interview.routes';
 import { stageTypeRouter } from './routes/stageType.routes';
@@ -47,6 +48,7 @@ export function createApp(): Application {
   app.use('/api/discards', discardRouter);
   app.use('/api/rejections', rejectionRouter);
   app.use('/api/grants', grantRouter);
+  app.use('/api/job-statuses', jobStatusRouter);
   app.use('/api/blacklist', blacklistRouter);
   app.use('/api/interviews', interviewRouter);
   app.use('/api/stage-types', stageTypeRouter);
