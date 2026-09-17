@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma';
 import { addZonedDays, endOfZonedDate, resolveZone, startOfZonedDate, startOfZonedDay } from '../lib/zone';
 import { randomUUID } from 'node:crypto';
 import { fingerprint } from '../lib/fingerprint';
+import { GATED_SITES, grantService, siteFeatureKey } from './grant.service';
 
 const JOB_SITES = new Set<string>(Object.values(JobSite));
 
@@ -340,6 +341,22 @@ export const jobService = {
         : {}),
     };
 
+    // Gated sources are removed unless this profile has been granted them.
+    //
+    // Applied to the WHERE, not filtered from the results: a paid source must
+    // not reach the response at all, and filtering afterwards would also make
+    // the total and the page size lie.
+    //
+    // Through `AND` rather than assigned onto `where`, because the reader's own
+    // source filter already owns the `site` key — writing there would silently
+    // replace "only Indeed" with "anything but Remote Rocketship". As an AND
+    // clause both constraints survive and the narrower one wins, which is what
+    // a deny rule has to do.
+    const gateWhere = await grantService.hiddenSitesWhere(profileId);
+    if (Object.keys(gateWhere).length) {
+      where.AND = [...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []), gateWhere];
+    }
+
     const [total, rows, latest] = await Promise.all([
       prisma.job.count({ where }),
       prisma.job.findMany({
@@ -457,8 +474,14 @@ export const jobService = {
           ? { resumes: { some: { profileId } } }
           : { resumes: { none: { profileId } } };
 
+    // Same gate as the list. Counting postings the reader cannot see would put
+    // a "3 new jobs" banner on the screen that brings back nothing when pressed
+    // — the exact stuck-banner failure the snapshot work already fixed once.
+    const gateWhere = await grantService.hiddenSitesWhere(profileId);
+
     return prisma.job.count({
       where: {
+        ...gateWhere,
         id: { gt: afterId },
         ...(validSites.length ? { site: { in: validSites } } : {}),
         ...(remote ? { remote: true } : {}),
@@ -485,7 +508,14 @@ export const jobService = {
     });
   },
 
-  async getById(id: number, includeAppliedCount = false) {
+  /**
+   * One posting.
+   *
+   * `profileId` is what the gate is evaluated against. Optional so existing
+   * callers keep working, but a gated posting is then withheld from everyone —
+   * deny by default, so forgetting to pass it fails closed rather than open.
+   */
+  async getById(id: number, includeAppliedCount = false, profileId?: number) {
     // Carries `appliedCount` for the same reason list() does: the standalone
     // job page shows the same badge row as the card, and a badge that appears
     // in the list then disappears when you open the posting reads as a bug.
@@ -495,6 +525,15 @@ export const jobService = {
       include: { _count: { select: { applications: true } } },
     });
     if (!row) return row;
+    // A gated posting is reported as missing rather than forbidden: telling
+    // someone a job exists but is not theirs to read is itself a leak from a
+    // paid source, and "not found" is true enough from where they stand.
+    if (
+      (GATED_SITES as readonly string[]).includes(row.site) &&
+      !(await grantService.has(profileId, siteFeatureKey(row.site)))
+    ) {
+      return null;
+    }
     const { _count, ...job } = row;
     return includeAppliedCount ? { ...job, appliedCount: _count.applications } : job;
   },

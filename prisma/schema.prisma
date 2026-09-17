@@ -49,6 +49,15 @@ model Job {
   createdById Int?  @map("created_by_id")
   createdBy   User? @relation("JobCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
+  /// Whether this posting is ALSO listed on LinkedIn.
+  ///
+  /// Nullable with three meanings, which is the point: true and false are
+  /// answers, NULL is "this source does not say". Only Remote Rocketship
+  /// reports it — its whole pitch is jobs you will not find on LinkedIn — so
+  /// every other site stores NULL rather than a made-up false, and the UI shows
+  /// the badge only where there is something to show.
+  onLinkedin Boolean? @map("on_linkedin")
+
   resumes      Resume[]
   applications JobApplication[]
   discards     JobDiscard[]
@@ -79,6 +88,7 @@ enum JobSite {
   linkedin
   dice
   ziprecruiter
+  remoterocketship
 
   /// Added by hand through the app, for a posting that is not on any site we
   /// scrape. Not a scraper target — nothing writes it except `jobService.addManual`.
@@ -139,6 +149,7 @@ enum JobSiteTemp {
   linkedin
   dice
   ziprecruiter
+  remoterocketship
 }
 
 /// One scraper run — logged by the Python scrapers so super-admins can see when
@@ -208,6 +219,7 @@ model User {
   /// a shared profile has several users, so the row records WHO dismissed it.
   discardsMarked   JobDiscard[]   @relation("DiscardMarkedBy")
   rejectionsMarked JobRejection[] @relation("RejectionMarkedBy")
+  grantsGiven      ProfileGrant[] @relation("GrantedBy")
 
   /// Interview timelines this user opened, same reasoning as the two above:
   /// a shared profile has several users, so the row records WHO started it.
@@ -462,6 +474,7 @@ model Profile {
   applications    JobApplication[]
   discards        JobDiscard[]
   rejections      JobRejection[]
+  grants          ProfileGrant[]
   coverLetters    CoverLetter[]
   interviews      Interview[]
   aiQueries       JobAiQuery[]
@@ -678,6 +691,41 @@ model JobApplication {
 ///
 /// Keyed on (profile, job) like every other per-profile judgement here: two
 /// bidders working different profiles get rejected separately.
+/// One thing a profile is allowed to do, granted by a super admin.
+///
+/// Keyed on a REGISTRY STRING rather than on a job site, because the things
+/// needing approval are not all sites: reading a paid source is one, seeing how
+/// many other profiles applied to a posting is another, and more are coming.
+/// A `site` column could only ever express the first.
+///
+/// Deny by default — the absence of a row IS the denial, and revoking is a
+/// delete. That is the only safe default for a permission that costs money or
+/// exposes other people's activity.
+///
+/// The string is validated against `FEATURES` in grant.service.ts, never free
+/// text: an unknown key would be a grant that silently does nothing.
+model ProfileGrant {
+  id Int @id @default(autoincrement())
+
+  profileId Int     @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  /// Registry key — "site:remoterocketship", "applied_count".
+  feature String @db.VarChar(64)
+
+  /// Who granted it, and when. "Who approved this" is the first question when
+  /// a subscription bill arrives or someone sees data they should not have.
+  grantedById Int  @map("granted_by_id")
+  grantedBy   User @relation("GrantedBy", fields: [grantedById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([profileId, feature])
+  @@index([feature])
+  @@map("profile_grants")
+}
+
 model JobRejection {
   id Int @id @default(autoincrement())
 

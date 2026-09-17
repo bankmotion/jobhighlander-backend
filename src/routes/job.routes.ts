@@ -2,6 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import { DuplicateJobError, jobService } from '../services/job.service';
 import { prisma } from '../lib/prisma';
+import { grantService } from '../services/grant.service';
 import { usableProfileWhere } from '../services/profile.service';
 import type { AuthedRequest } from '../middleware/auth.middleware';
 
@@ -69,19 +70,31 @@ jobRouter.get('/', async (req: AuthedRequest, res: Response, next: NextFunction)
         where: { id: profileId, ...usableProfileWhere(req.user!.id) },
         select: { id: true },
       }));
+    // Resolved once and used for both the badge and the filter below, so the
+    // two can never disagree about who is allowed to know this.
+    const maySeeAppliedCount =
+      req.user!.role === 'super_admin' ||
+      (usable ? await grantService.has(profileId, 'applied_count') : false);
+
     const result = await jobService.list({
       ...rest,
       sites: site,
       remote: remote === '1' || remote === 'true',
       profileId: usable ? profileId : undefined,
       // "N profiles applied" spans every profile on the board, including ones
-      // this caller cannot see. Super admins only.
-      includeAppliedCount: req.user!.role === 'super_admin',
+      // this caller cannot see.
+      //
+      // Super admins always; anyone else only for a profile a super admin has
+      // approved on the Approvals page. The role stays as the standing case
+      // rather than becoming a grant of its own — a super admin can read the
+      // underlying rows regardless, so making them approve themselves would be
+      // ceremony rather than a control.
+      includeAppliedCount: maySeeAppliedCount,
       // Same restriction, same reason. Hiding the badge but honouring
       // ?othersApplied=others would leave the information reachable by URL:
       // the filter names exactly the postings the badge would have marked, so
       // gating one without the other only hides the label, not the fact.
-      othersApplied: req.user!.role === 'super_admin' ? rest.othersApplied : undefined,
+      othersApplied: maySeeAppliedCount ? rest.othersApplied : undefined,
     });
     res.json(result);
   } catch (err) {
@@ -172,11 +185,16 @@ jobRouter.get('/new-count', async (req: AuthedRequest, res: Response, next: Next
       sites: site,
       remote: remote === '1' || remote === 'true',
       profileId: usable ? profileId : undefined,
-      // The SAME gate the list applies. Counting with a filter the list then
-      // ignores makes the two disagree, and the banner is built on them
-      // agreeing: it offers jobs the list will not show, so pressing it changes
-      // nothing and the count never clears.
-      othersApplied: req.user!.role === 'super_admin' ? rest.othersApplied : undefined,
+      // The SAME gate the list applies — now including the grant, not just the
+      // role. Counting with a filter the list then ignores makes the two
+      // disagree, and the banner is built on them agreeing: it offers jobs the
+      // list will not show, so pressing it changes nothing and the count never
+      // clears.
+      othersApplied:
+        req.user!.role === 'super_admin' ||
+        (usable ? await grantService.has(profileId, 'applied_count') : false)
+          ? rest.othersApplied
+          : undefined,
       afterId: after.data.afterId,
     });
     res.json({ count });
@@ -191,7 +209,22 @@ jobRouter.get('/:id', async (req: AuthedRequest, res: Response, next: NextFuncti
     if (!Number.isInteger(id) || id <= 0) {
       return res.status(400).json({ error: 'Invalid id' });
     }
-    const job = await jobService.getById(id, req.user!.role === 'super_admin');
+    // The profile decides whether a gated source is readable, and it is only
+    // honoured once proven usable — a guessed id must not borrow someone else's
+    // paid access.
+    const wanted = Number(req.query.profileId);
+    const usable =
+      Number.isInteger(wanted) && wanted > 0
+        ? await prisma.profile.findFirst({
+            where: { id: wanted, ...usableProfileWhere(req.user!.id) },
+            select: { id: true },
+          })
+        : null;
+    const job = await jobService.getById(
+      id,
+      req.user!.role === 'super_admin',
+      usable ? wanted : undefined,
+    );
     if (!job) return res.status(404).json({ error: 'Job not found' });
     res.json(job);
   } catch (err) {
