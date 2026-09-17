@@ -1,4 +1,4 @@
-import { Router, type Request, type Response, type NextFunction } from 'express';
+import { Router, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { DuplicateJobError, jobService } from '../services/job.service';
 import { prisma } from '../lib/prisma';
@@ -156,9 +156,19 @@ jobRouter.post('/', async (req: AuthedRequest, res: Response, next: NextFunction
   }
 });
 
-jobRouter.get('/filters', async (_req: Request, res: Response, next: NextFunction) => {
+jobRouter.get('/filters', async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
-    res.json(await jobService.filters());
+    // Same proof-of-use as everywhere else: a guessed profile id must not
+    // reveal a gated source in the filter list.
+    const wanted = Number(req.query.profileId);
+    const usable =
+      Number.isInteger(wanted) && wanted > 0
+        ? await prisma.profile.findFirst({
+            where: { id: wanted, ...usableProfileWhere(req.user!.id) },
+            select: { id: true },
+          })
+        : null;
+    res.json(await jobService.filters(usable ? wanted : undefined));
   } catch (err) {
     next(err);
   }

@@ -546,7 +546,15 @@ export const jobService = {
     return includeAppliedCount ? { ...job, appliedCount: _count.applications } : job;
   },
 
-  async filters() {
+  /**
+   * The values worth offering in the filter bar.
+   *
+   * `profileId` decides which gated sources are offerable. Without it every
+   * reader would be shown "Remote Rocketship" the moment the first row lands —
+   * naming a paid source they cannot read, and offering a filter that returns
+   * nothing. The listing is hidden for the same reason the jobs are.
+   */
+  async filters(profileId?: number) {
     const [sites, locations] = await Promise.all([
       prisma.job.findMany({ distinct: ['site'], select: { site: true }, orderBy: { site: 'asc' } }),
       prisma.job.findMany({
@@ -565,7 +573,16 @@ export const jobService = {
     // jobs until one exists, which is exactly when you want to check that
     // adding one worked. It also stops the option appearing and vanishing as
     // the last manual job is added or deleted.
-    const withOther: JobSite[] = present.includes('other') ? present : [...present, 'other'];
+    // Gated sources this profile has not been granted are dropped before the
+    // list is ever built, so an unapproved reader sees no trace that the source
+    // exists — the same rule the job query applies.
+    const held = await grantService.featuresFor(profileId);
+    const visible = present.filter(
+      (site) =>
+        !(GATED_SITES as readonly string[]).includes(site) || held.has(siteFeatureKey(site)),
+    );
+
+    const withOther: JobSite[] = visible.includes('other') ? visible : [...visible, 'other'];
 
     return {
       sites: withOther,
