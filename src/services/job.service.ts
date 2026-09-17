@@ -582,7 +582,19 @@ export const jobService = {
         !(GATED_SITES as readonly string[]).includes(site) || held.has(siteFeatureKey(site)),
     );
 
-    const withOther: JobSite[] = visible.includes('other') ? visible : [...visible, 'other'];
+    // A GRANTED gated source is offered even before its first row lands.
+    //
+    // The derive-from-data rule is right for ordinary sources — a scraper we do
+    // not run should not be offerable — but a grant is a stronger statement
+    // than data presence: an admin has said this profile uses this source. It
+    // also stops the entry flickering in and out as the last row ages off,
+    // which is the same reason 'other' is special-cased below.
+    const granted = GATED_SITES.filter(
+      (site) => held.has(siteFeatureKey(site)) && !visible.includes(site),
+    );
+    const offered = [...visible, ...granted].sort();
+
+    const withOther: JobSite[] = offered.includes('other') ? offered : [...offered, 'other'];
 
     return {
       sites: withOther,
