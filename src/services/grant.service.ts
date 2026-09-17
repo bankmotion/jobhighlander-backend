@@ -33,7 +33,7 @@ export const FEATURES: readonly FeatureDef[] = [
     key: 'applied_count',
     label: 'Applied-by count',
     description:
-      'The "N profiles applied" badge. Counts across the whole board, including profiles this reader cannot otherwise see.',
+      'The "N profiles applied" badge and its filter. Counts across the whole board, including profiles this reader cannot otherwise see. Applies to everyone — a super admin needs the grant too.',
   },
 ] as const;
 

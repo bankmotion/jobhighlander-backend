@@ -72,9 +72,15 @@ jobRouter.get('/', async (req: AuthedRequest, res: Response, next: NextFunction)
       }));
     // Resolved once and used for both the badge and the filter below, so the
     // two can never disagree about who is allowed to know this.
-    const maySeeAppliedCount =
-      req.user!.role === 'super_admin' ||
-      (usable ? await grantService.has(profileId, 'applied_count') : false);
+    //
+    // The grant is the WHOLE answer — no role bypass. A super-admin exemption
+    // would mean the Approvals page governed everyone except the person
+    // reading it, which is not "managed on the Approvals page" in any useful
+    // sense. A super admin who wants the count approves the profile, and the
+    // page then says what is actually true.
+    const maySeeAppliedCount = usable
+      ? await grantService.has(profileId, 'applied_count')
+      : false;
 
     const result = await jobService.list({
       ...rest,
@@ -200,11 +206,9 @@ jobRouter.get('/new-count', async (req: AuthedRequest, res: Response, next: Next
       // disagree, and the banner is built on them agreeing: it offers jobs the
       // list will not show, so pressing it changes nothing and the count never
       // clears.
-      othersApplied:
-        req.user!.role === 'super_admin' ||
-        (usable ? await grantService.has(profileId, 'applied_count') : false)
-          ? rest.othersApplied
-          : undefined,
+      othersApplied: (usable ? await grantService.has(profileId, 'applied_count') : false)
+        ? rest.othersApplied
+        : undefined,
       afterId: after.data.afterId,
     });
     res.json({ count });
@@ -232,7 +236,9 @@ jobRouter.get('/:id', async (req: AuthedRequest, res: Response, next: NextFuncti
         : null;
     const job = await jobService.getById(
       id,
-      req.user!.role === 'super_admin',
+      // Same grant as the list. A badge that shows on the card and vanishes
+      // when the posting is opened reads as a bug, so the two follow one rule.
+      usable ? await grantService.has(wanted, 'applied_count') : false,
       usable ? wanted : undefined,
     );
     if (!job) return res.status(404).json({ error: 'Job not found' });
