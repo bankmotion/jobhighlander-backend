@@ -413,6 +413,14 @@ export const jobService = {
     return {
       items,
       latestId: latest?.id ?? 0,
+      // Whether this caller may know how many OTHER profiles applied.
+      //
+      // Reported rather than left for the client to work out. The rule is a
+      // role OR a grant, and a second copy of it in the frontend is a second
+      // thing to keep in step — which had already drifted: the badge followed
+      // the grant while the filter control still checked the role, so an
+      // approved bidder saw counts but no way to filter by them.
+      canSeeAppliedCount: Boolean(params.includeAppliedCount),
       pagination: {
         page,
         pageSize,
