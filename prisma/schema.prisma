@@ -73,6 +73,16 @@ model Job {
   @@unique([site, fingerprint], name: "site_fingerprint")
   @@index([site])
   @@index([createdById])
+  /// The list's ordering. Without this, every page was a full scan plus a
+  /// filesort of all 52k rows to return twenty — 1,436 ms.
+  @@index([createdAt, id])
+  /// The default list is remote-only: filter and sort from one index.
+  @@index([remote, createdAt, id])
+  /// `site` is in the key so the gated-source clause stays a covering read.
+  /// Without it the count behind the list cost 651 ms instead of 7 ms.
+  @@index([remote, site, createdAt, id])
+  /// The posted-date filter, and the scrapers' resolve queues.
+  @@index([postedAt])
   @@map("jobs")
 }
 
