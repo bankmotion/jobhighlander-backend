@@ -18,7 +18,11 @@ const schema = z.object({
   // app: a cookie that outlives its token leaves someone looking signed in
   // while every request 401s, which reads as the app being broken rather than
   // as a session that ended.
-  JWT_EXPIRES_IN: z.string().default('24h'),
+  // A week. Sign-in is Google-only and the board is used daily, so a 24h token
+  // meant re-authenticating most mornings for no security gain — the cookie is
+  // httpOnly and the token carries no privilege beyond the role it names.
+  // Keep `SESSION_SECONDS` in the frontend's Google callback in step with this.
+  JWT_EXPIRES_IN: z.string().default('7d'),
   ANTHROPIC_API_KEY: z.preprocess(
     (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
     z.string().min(1).optional(),
