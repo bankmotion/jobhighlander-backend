@@ -178,6 +178,11 @@ export interface ManualJobInput {
   /** ISO date (YYYY-MM-DD) in `tz`; defaults to now. */
   postedOn?: string | null;
   tz?: string;
+  /**
+   * Restrict the posting to one profile. Omitted or null = the shared board,
+   * which is what every scraped job is and what manual jobs were before this.
+   */
+  visibleToProfileId?: number | null;
 }
 
 /** Thrown when the posting is already in the table, with the id of the row. */
@@ -242,6 +247,10 @@ export const jobService = {
           postedAt,
           fingerprint: fp,
           createdById: userId,
+          // Null is the shared board. The caller has already proven it may use
+          // this profile, so a value here is a deliberate restriction rather
+          // than an id that happened to be posted.
+          visibleToProfileId: input.visibleToProfileId ?? null,
         },
       });
     } catch (err) {
@@ -356,6 +365,19 @@ export const jobService = {
     if (Object.keys(gateWhere).length) {
       where.AND = [...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []), gateWhere];
     }
+
+    // A hand-added posting restricted to one profile is that profile's alone.
+    //
+    // NULL is the shared board — every scraped row, and every manual one added
+    // before this existed — so the common case is untouched. Expressed as an
+    // AND-ed OR rather than written onto `where` directly, for the same reason
+    // the source gate is: the reader's own filters already own those keys.
+    where.AND = [
+      ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+      profileId
+        ? { OR: [{ visibleToProfileId: null }, { visibleToProfileId: profileId }] }
+        : { visibleToProfileId: null },
+    ];
 
     const [total, rows, latest] = await Promise.all([
       prisma.job.count({ where }),
@@ -540,6 +562,11 @@ export const jobService = {
       (GATED_SITES as readonly string[]).includes(row.site) &&
       !(await grantService.has(profileId, siteFeatureKey(row.site)))
     ) {
+      return null;
+    }
+    // Same rule as the list. Reported as missing rather than forbidden:
+    // confirming a private posting exists is itself the leak.
+    if (row.visibleToProfileId != null && row.visibleToProfileId !== profileId) {
       return null;
     }
     const { _count, ...job } = row;

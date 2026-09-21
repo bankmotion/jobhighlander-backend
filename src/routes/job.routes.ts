@@ -134,6 +134,8 @@ const manualJobSchema = z.object({
   remote: z.boolean().optional(),
   postedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal('')),
   tz: z.string().trim().max(64).optional(),
+  // Which profile the posting belongs to, or absent for the shared board.
+  visibleToProfileId: z.coerce.number().int().positive().optional(),
 });
 
 jobRouter.post('/', async (req: AuthedRequest, res: Response, next: NextFunction) => {
@@ -142,9 +144,19 @@ jobRouter.post('/', async (req: AuthedRequest, res: Response, next: NextFunction
     if (!parsed.success) {
       return res.status(400).json({ error: 'Invalid job', details: parsed.error.flatten() });
     }
-    const { jobUrl, applyUrl, postedOn, ...rest } = parsed.data;
+    const { jobUrl, applyUrl, postedOn, visibleToProfileId, ...rest } = parsed.data;
+    // Only honoured for a profile this caller may actually use. Otherwise a
+    // guessed id would hide a posting inside someone else's profile, where the
+    // person who added it could no longer see it either.
+    const owned =
+      visibleToProfileId !== undefined &&
+      (await prisma.profile.findFirst({
+        where: { id: visibleToProfileId, ...usableProfileWhere(req.user!.id) },
+        select: { id: true },
+      }));
     const job = await jobService.addManual(req.user!.id, {
       ...rest,
+      visibleToProfileId: owned ? visibleToProfileId : null,
       // The schema allows '' so an empty input is not a validation error; the
       // service wants absence, not an empty string.
       jobUrl: jobUrl || null,

@@ -58,6 +58,20 @@ model Job {
   /// the badge only where there is something to show.
   onLinkedin Boolean? @map("on_linkedin")
 
+  /// Who may see a HAND-ADDED posting. NULL means everyone, which is what every
+  /// scraped row is and what manual jobs were before this existed.
+  ///
+  /// Set to a profile id, the posting is that profile's alone. Someone pasting a
+  /// job they were sent privately, or one they do not want the rest of the team
+  /// bidding on, has no way to say so otherwise — the only option was the shared
+  /// board.
+  ///
+  /// Nullable rather than a boolean plus an owner: one column carries both the
+  /// answer and whose it is, and "everyone" cannot be accidentally paired with a
+  /// profile id that means nothing.
+  visibleToProfileId Int?     @map("visible_to_profile_id")
+  visibleToProfile   Profile? @relation("JobVisibleTo", fields: [visibleToProfileId], references: [id], onDelete: Cascade)
+
   resumes      Resume[]
   applications JobApplication[]
   discards     JobDiscard[]
@@ -485,6 +499,7 @@ model Profile {
   discards        JobDiscard[]
   rejections      JobRejection[]
   grants          ProfileGrant[]
+  visibleJobs     Job[]                @relation("JobVisibleTo")
   coverLetters    CoverLetter[]
   interviews      Interview[]
   aiQueries       JobAiQuery[]
