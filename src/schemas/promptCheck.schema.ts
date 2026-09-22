@@ -63,12 +63,21 @@ export type PromptCheck = z4.infer<typeof promptCheckSchema>;
 /**
  * The longest addendum that can be saved.
  *
- * The application prompt is roughly nine thousand characters. An addendum
- * allowed to rival it stops being an addendum and becomes a second prompt
- * competing with the first, which is exactly the arrangement this feature was
- * shaped to avoid.
+ * The application prompt is roughly nine thousand characters, so an addendum
+ * near this ceiling is comparable in size to the thing it steers. That is
+ * accepted deliberately — the limit was halved before and the space ran out in
+ * practice — but it is a real tradeoff rather than free headroom: the whole
+ * addendum goes into EVERY generation for that profile, so length is paid per
+ * resume in tokens, and the closer it gets to the application prompt the more
+ * it competes with it instead of guiding it.
+ *
+ * If drafts start arriving near the ceiling, the answer is probably a tighter
+ * addendum rather than a higher number.
+ *
+ * The frontend keeps its own copy in `lib/profile-prompts.ts` for the editor's
+ * character counter. The two must move together.
  */
-export const CUSTOM_PROMPT_MAX = 4_000;
+export const CUSTOM_PROMPT_MAX = 8_000;
 
 /**
  * The fence the addendum is delivered inside, and the reason the text is
