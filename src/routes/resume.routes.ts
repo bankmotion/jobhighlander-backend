@@ -8,6 +8,7 @@ import { generationService } from '../services/generation.service';
 import { prisma } from '../lib/prisma';
 import { tailoredResumeSchema } from '../schemas/resume.schema';
 import { renderResumeHtml } from '../resume/render';
+import { BACKGROUNDS, isBackground, DEFAULT_BACKGROUND } from '../resume/backgrounds';
 import { htmlToPdf } from '../resume/pdf';
 import { renderResumeDocx } from '../resume/docx';
 import { presetService, PARAMETER_SPACE } from '../services/preset.service';
@@ -39,7 +40,14 @@ resumeRouter.post('/preview', requireAuth, async (req: AuthedRequest, res: Respo
 
 resumeRouter.get('/templates', requireAuth, async (_req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
-    res.json({ presets: await presetService.list(), parameterSpace: PARAMETER_SPACE });
+    res.json({
+      presets: await presetService.list(),
+      parameterSpace: PARAMETER_SPACE,
+      // Sent with the presets rather than from a second endpoint: the picker
+      // needs both to draw one screen, and a hard-coded copy in the frontend
+      // would drift the moment a background is added or renamed here.
+      backgrounds: BACKGROUNDS.map(({ key, name, description, category }) => ({ key, name, description, category })),
+    });
   } catch (err) {
     next(err);
   }
@@ -124,6 +132,17 @@ const pdfBodySchema = zod.object({
   profileId: zod.coerce.number().int().positive(),
   templateKey: zod.string().trim().max(64).optional(),
   pageSize: zod.enum(['letter', 'a4']).default('letter'),
+  // Validated against the registry rather than accepted as free text. An
+  // unknown key falls back to plain white in the renderer anyway, but
+  // rejecting it here means a typo surfaces as an error rather than as a
+  // silently undecorated PDF. Ignored by the .docx route, which shares this
+  // schema but cannot carry the layer.
+  background: zod
+    .string()
+    .trim()
+    .max(64)
+    .refine(isBackground, { message: 'Unknown background' })
+    .default(DEFAULT_BACKGROUND),
 });
 
 resumeRouter.post('/docx', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
@@ -184,7 +203,7 @@ resumeRouter.post('/pdf', requireAuth, async (req: AuthedRequest, res: Response,
       return res.status(400).json({ error: 'Resume does not match the expected shape' });
     }
 
-    const { profileId, templateKey, pageSize } = parsed.data;
+    const { profileId, templateKey, pageSize, background } = parsed.data;
 
     // Scoped to profiles the caller may use (own or accepted invitation): one
     // they may not is a 404, not a 403, so the endpoint never confirms that a
@@ -200,10 +219,10 @@ resumeRouter.post('/pdf', requireAuth, async (req: AuthedRequest, res: Response,
     const preset = templateKey
       ? await presetService.get(templateKey)
       : await presetService.forProfile(profileId, req.user!.id);
-    const html = renderResumeHtml({ resume: resume.data, name, contact, preset, pageSize });
+    const html = renderResumeHtml({ resume: resume.data, name, contact, preset, pageSize, background });
     const { pdf, cached, ms } = await htmlToPdf(html, pageSize);
 
-    logger.info('Resume PDF rendered', { bytes: pdf.length, cached, ms, templateKey, pageSize });
+    logger.info('Resume PDF rendered', { bytes: pdf.length, cached, ms, templateKey, pageSize, background });
 
     const file = (name || 'resume').replace(/[^\w.-]+/g, '_').slice(0, 60) || 'resume';
     res.setHeader('Content-Type', 'application/pdf');

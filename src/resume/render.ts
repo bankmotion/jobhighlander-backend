@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { TailoredResume } from '../schemas/resume.schema';
 import { getLayout, PAGE_PX, FALLBACK_PRESET, type PageSize, type Preset } from './templates/registry';
 import { resolveTokens, tokensToCss } from './tokens';
+import { backgroundCss } from './backgrounds';
 
 export interface RenderInput {
   resume: TailoredResume;
@@ -10,6 +11,8 @@ export interface RenderInput {
   contact: string;
   preset?: Preset | null;
   pageSize?: PageSize;
+  /** Decorative background key. Absent or unknown renders plain white. */
+  background?: string | null;
 }
 
 export function renderResumeHtml({
@@ -18,6 +21,7 @@ export function renderResumeHtml({
   contact,
   preset,
   pageSize = 'letter',
+  background,
 }: RenderInput): string {
   const p = preset ?? FALLBACK_PRESET;
   const layout = getLayout(p.layout);
@@ -40,6 +44,11 @@ export function renderResumeHtml({
   // scoped to :root so a layout never has to know which preset produced them.
   const tokens = tokensToCss(resolved);
 
+  // Appended AFTER the layout's rules, never merged into them. The layer needs
+  // to win over `html, body { background: #fff }`, and a layout must stay
+  // readable on its own without knowing a background exists.
+  const bg = backgroundCss(background);
+
   const body = renderToStaticMarkup(createElement(layout.Component, { resume, name, contact }));
 
   return `<!doctype html>
@@ -49,6 +58,7 @@ export function renderResumeHtml({
 <title>${escapeHtml(name || 'Resume')}</title>
 <style>:root{${tokens}}</style>
 <style>${css}</style>
+<style>${bg}</style>
 </head>
 <body>${body}</body>
 </html>`;
