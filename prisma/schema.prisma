@@ -104,6 +104,9 @@ model Job {
   @@index([remote, site, createdAt, id, visibleToProfileId])
   /// The posted-date filter, and the scrapers' resolve queues.
   @@index([postedAt])
+  /// Feeds the location dropdown's GROUP BY. Without it that grouping sorts
+  /// 63k values into a temporary table on every page load.
+  @@index([location])
   @@map("jobs")
 }
 

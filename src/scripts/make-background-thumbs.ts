@@ -7,6 +7,7 @@ import { renderResumeHtml } from '../resume/render';
 import { PAGE_PX } from '../resume/templates/registry';
 import { presetService } from '../services/preset.service';
 import { BACKGROUNDS } from '../resume/backgrounds';
+import type { TailoredResume } from '../schemas/resume.schema';
 
 /**
  * Thumbnails for the background picker.
