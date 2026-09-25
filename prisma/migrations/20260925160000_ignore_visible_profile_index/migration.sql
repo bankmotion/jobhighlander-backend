@@ -1,0 +1,18 @@
+-- Hide the visibility FK index from the query planner.
+--
+-- `visible_to_profile_id` carries a foreign key, so InnoDB requires an index
+-- with it as the leading column and the index cannot simply be dropped. But
+-- its presence wrecked the job list: for the per-profile clause
+-- `IS NULL OR = me`, the optimizer preferred a `ref_or_null` lookup on this
+-- single-column index over the composite that already satisfies the ORDER BY,
+-- and then had to filesort every matching row to restore the ordering.
+--
+-- Measured on 63k rows: 1,678 ms and 177 MB of disk reads to return twenty
+-- rows, against 8 ms using the composite index. It is the single largest cost
+-- on the page.
+--
+-- IGNORED keeps the index maintained -- so the foreign key, and the cascade on
+-- profile delete, are untouched -- while removing it from the planner's
+-- choices. Reverse with: ALTER TABLE `jobs` ALTER INDEX
+-- `jobs_visible_to_profile_id_idx` NOT IGNORED;
+ALTER TABLE `jobs` ALTER INDEX `jobs_visible_to_profile_id_idx` IGNORED;
