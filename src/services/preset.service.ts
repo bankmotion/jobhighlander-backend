@@ -3,6 +3,7 @@ import { logger } from './logger.service';
 import { ownedProfileWhere, usableProfileWhere } from './profile.service';
 import { FALLBACK_PRESET, LAYOUTS, type Preset } from '../resume/templates/registry';
 import { ACCENTS, DENSITIES, FONT_PAIRS } from '../resume/tokens';
+import { isBackground } from '../resume/backgrounds';
 
 export const presetService = {
   async list(): Promise<Preset[]> {
@@ -25,6 +26,23 @@ export const presetService = {
       select: { defaultTemplateKey: true },
     });
     return this.get(profile?.defaultTemplateKey);
+  },
+
+  /**
+   * Save this profile's default background.
+   *
+   * Simpler than `setDefault` below on purpose: a background is not stamped
+   * onto the resume row, it is resolved at render time. So there is nothing to
+   * carry into existing resumes, and nothing to protect a sent document from --
+   * changing it changes what future renders look like, and that is all.
+   */
+  async setDefaultBackground(profileId: number, ownerId: number, key: string): Promise<boolean> {
+    if (!isBackground(key)) return false;
+    const r = await prisma.profile.updateMany({
+      where: { id: profileId, ...ownedProfileWhere(ownerId) },
+      data: { defaultBackground: key },
+    });
+    return r.count > 0;
   },
 
   async setDefault(profileId: number, ownerId: number, key: string): Promise<boolean> {

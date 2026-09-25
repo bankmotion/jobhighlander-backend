@@ -58,6 +58,32 @@ const setDefaultSchema = zod.object({
   templateKey: zod.string().trim().min(1).max(64),
 });
 
+const setBackgroundSchema = zod.object({
+  profileId: zod.coerce.number().int().positive(),
+  background: zod.string().trim().max(64).refine(isBackground, { message: 'Unknown background' }),
+});
+
+/** Save a profile's default background. Owner only, like the template default. */
+resumeRouter.post('/backgrounds/default', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
+  try {
+    const parsed = setBackgroundSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
+    }
+    const ok = await presetService.setDefaultBackground(
+      parsed.data.profileId,
+      req.user!.id,
+      parsed.data.background,
+    );
+    // Either the profile is not yours or it does not exist; one status for
+    // both, so the endpoint never confirms which ids are real.
+    if (!ok) return res.status(404).json({ error: 'Profile not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 resumeRouter.post('/templates/default', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
   try {
     const parsed = setDefaultSchema.safeParse(req.body);
@@ -137,12 +163,15 @@ const pdfBodySchema = zod.object({
   // rejecting it here means a typo surfaces as an error rather than as a
   // silently undecorated PDF. Ignored by the .docx route, which shares this
   // schema but cannot carry the layer.
+  // Optional, with NO default: absent means "whatever this profile is set to",
+  // which only the handler can resolve. Defaulting here would silently beat
+  // the profile's saved choice on every request that did not name one.
   background: zod
     .string()
     .trim()
     .max(64)
     .refine(isBackground, { message: 'Unknown background' })
-    .default(DEFAULT_BACKGROUND),
+    .optional(),
 });
 
 resumeRouter.post('/docx', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
@@ -210,7 +239,7 @@ resumeRouter.post('/pdf', requireAuth, async (req: AuthedRequest, res: Response,
     // row exists.
     const profile = await prisma.profile.findFirst({
       where: { id: profileId, ...usableProfileWhere(req.user!.id) },
-      select: { firstName: true, lastName: true, email: true, phone: true, location: true, linkedin: true },
+      select: { firstName: true, lastName: true, email: true, phone: true, location: true, linkedin: true, defaultBackground: true },
     });
     if (!profile) return res.status(404).json({ error: 'Profile not found' });
     const { name, contact } = profileIdentity(profile);
@@ -219,10 +248,14 @@ resumeRouter.post('/pdf', requireAuth, async (req: AuthedRequest, res: Response,
     const preset = templateKey
       ? await presetService.get(templateKey)
       : await presetService.forProfile(profileId, req.user!.id);
-    const html = renderResumeHtml({ resume: resume.data, name, contact, preset, pageSize, background });
+    // An explicit choice wins (the picker previewing one); otherwise the
+    // profile's saved default; otherwise plain. Same precedence as the
+    // template above, so the two settings behave alike.
+    const bg = background ?? profile.defaultBackground ?? DEFAULT_BACKGROUND;
+    const html = renderResumeHtml({ resume: resume.data, name, contact, preset, pageSize, background: bg });
     const { pdf, cached, ms } = await htmlToPdf(html, pageSize);
 
-    logger.info('Resume PDF rendered', { bytes: pdf.length, cached, ms, templateKey, pageSize, background });
+    logger.info('Resume PDF rendered', { bytes: pdf.length, cached, ms, templateKey, pageSize, background: bg });
 
     const file = (name || 'resume').replace(/[^\w.-]+/g, '_').slice(0, 60) || 'resume';
     res.setHeader('Content-Type', 'application/pdf');

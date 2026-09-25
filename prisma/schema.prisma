@@ -488,6 +488,15 @@ model Profile {
   /// rather than break every resume that referenced it.
   defaultTemplateKey String? @map("default_template_key") @db.VarChar(64)
 
+  /// The decorative page background this profile's resumes render with.
+  ///
+  /// A plain key for the same reason as the template above: an unknown value
+  /// degrades to no background rather than failing the render. Null means the
+  /// profile has never chosen, which renders plain -- deliberately distinct
+  /// from an explicit 'none', so a future change of default cannot silently
+  /// overwrite someone's decision to have none.
+  defaultBackground String? @map("default_background") @db.VarChar(64)
+
   /// This profile's HOUSE STYLE ADDENDUM: extra drafting guidance appended to
   /// the application system prompt whenever a resume is generated for it.
   ///
