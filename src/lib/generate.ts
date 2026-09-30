@@ -320,7 +320,14 @@ function mapProviderError(provider: AiProvider, err: unknown): never {
   const code = e.code ?? e.error?.code ?? e.error?.type ?? '';
   const label = PROVIDER_LABEL[provider];
 
-  if (/credit balance is too low/i.test(msg) || /insufficient_quota/i.test(`${code}${msg}`)) {
+  // OpenAI reports an empty balance as a 429 too, and under more than one
+  // code: `insufficient_quota` on older accounts, `credit_balance_exhausted`
+  // on prepaid ones. Both must be caught BEFORE the 429 branch below, or an
+  // unpaid bill is reported as "wait a moment" and nobody tops it up.
+  if (
+    /credit balance is too low|no credits remaining/i.test(msg) ||
+    /insufficient_quota|credit_balance_exhausted/i.test(`${code}${msg}`)
+  ) {
     throw new AiProviderError(
       provider === 'claude'
         ? 'The Anthropic account has no API credits. Add credits at platform.claude.com under Billing.'
