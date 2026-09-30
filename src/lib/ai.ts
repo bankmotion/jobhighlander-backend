@@ -13,13 +13,21 @@ export type AiProvider = (typeof AI_PROVIDERS)[number];
  *
  * Both generators run at high volume against long job descriptions, and neither
  * writes anything a person will not read and correct, so the tier that costs
- * 5-25x more buys nothing here. Haiku 4.5 is $1/$5 per MTok; GPT-5.6 Luna is
- * $0.20/$1.20. Changing either string means adding its rate to lib/pricing.ts
+ * 5-25x more buys nothing here. Haiku 4.5 is $1/$5 per MTok; GPT-6 Luna is
+ * $0.10/$0.50. Changing either string means adding its rate to lib/pricing.ts
  * in the same commit, or every call after it is recorded as costing nothing.
+ *
+ * GPT-6 Luna replaced GPT-5.6 Luna on 2026-09-30 after both wrote the same ten
+ * real applications: about a third faster, under half the cost, and preferred
+ * in all ten by a blind reviewer for reading less keyword-stuffed. It takes the
+ * application prompt more literally than its predecessor did, which is why the
+ * prompt was tightened in the same change (see the migration
+ * 20260930180000_application_prompt_no_self_reference). Test a future model
+ * against that prompt before switching to it.
  */
 export const PROVIDER_MODEL: Readonly<Record<AiProvider, string>> = {
   claude: 'claude-haiku-4-5',
-  openai: 'gpt-5.6-luna',
+  openai: 'gpt-6-luna',
 };
 
 export const PROVIDER_LABEL: Readonly<Record<AiProvider, string>> = {

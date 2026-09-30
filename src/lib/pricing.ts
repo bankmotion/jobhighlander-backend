@@ -51,7 +51,10 @@ const RATES: Readonly<Record<string, Rate>> = {
   // or above its real price rather than below it.
   'gpt-5.6-sol': { input: 4, output: 20 },
   'gpt-5.6-terra': { input: 2, output: 12 },
+  // Kept after the move to GPT-6 Luna: usage recorded under it is still
+  // re-priced from this row.
   'gpt-5.6-luna': { input: 0.2, output: 1.2 },
+  'gpt-6-luna': { input: 0.1, output: 0.5 },
 };
 
 // Both vendors happen to price cached input identically as a multiple of the

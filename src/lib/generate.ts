@@ -35,12 +35,17 @@ const systemBlocks = (system: string[], cache: boolean) =>
   }));
 
 /**
- * GPT-5.6 Luna reasons at `medium` by default. Reasoning tokens bill at the
- * output rate, and neither generator is a reasoning problem — the shape is
- * fixed by a schema and the facts are supplied — so this is held at `low`,
- * which keeps a run roughly comparable to Haiku 4.5 running without thinking.
+ * GPT-6 Luna reasons at `medium` by default. Reasoning tokens bill at the
+ * output rate and are generated before the first word of the answer, and
+ * neither generator is a reasoning problem — the shape is fixed by a schema
+ * and the facts are supplied — so reasoning is switched off.
+ *
+ * Measured on ten real applications: `none` took a median 22s against 26s at
+ * `low`, with the same rule-following. What `low` bought was a longer skills
+ * list (32 against 25 to 28) and more of the posting's terms covered, so if
+ * resumes start reading thin on keywords, this is the setting to revisit.
  */
-const OPENAI_EFFORT: ReasoningEffort = 'low';
+const OPENAI_EFFORT: ReasoningEffort = 'none';
 
 /**
  * Anthropic reports `input_tokens` as the UNCACHED REMAINDER. OpenAI reports it
