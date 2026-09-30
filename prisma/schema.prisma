@@ -27,6 +27,13 @@ model Job {
   /// Never null in practice; optional because MariaDB generated columns cannot
   /// be declared NOT NULL.
   easyApply   Boolean?  @map("easy_apply")
+  /// "Same company, same title": SHA-1 of the two, normalised. NULL without a
+  /// company. A new job is a duplicate when a job with this key arrived in the
+  /// last 30 days (scraper/db.py, jobService.addManual).
+  ///
+  /// COMPUTED BY THE DATABASE, like `easyApply` (migration
+  /// 20260930200000_jobs_company_title_key). Read it; never write it.
+  companyTitleKey String? @map("company_title_key") @db.Char(40)
   company     String?   @db.VarChar(255)
   companyUrl  String?   @map("company_url") @db.VarChar(1024)
   jobType     String?   @map("job_type") @db.VarChar(64)
@@ -116,6 +123,8 @@ model Job {
   /// The Easy Apply / Apply Now filter, with and without the remote default.
   @@index([easyApply, createdAt, id, visibleToProfileId])
   @@index([remote, easyApply, createdAt, id, visibleToProfileId])
+  /// The same-company-and-title duplicate check.
+  @@index([companyTitleKey, createdAt])
   /// The posted-date filter, and the scrapers' resolve queues.
   @@index([postedAt])
   /// Feeds the location dropdown's GROUP BY. Without it that grouping sorts

@@ -204,6 +204,40 @@ export interface ManualJobInput {
   visibleToProfileId?: number | null;
 }
 
+/**
+ * A new job with the same company and title as one added within this many days
+ * is a duplicate. Mirrors `duplicate_window_days` in job-seeking/config.py, which
+ * applies the same rule to scraped jobs.
+ */
+const DUPLICATE_WINDOW_DAYS = 30;
+
+/**
+ * The newest job everyone can see with the same company and title, added in the
+ * last DUPLICATE_WINDOW_DAYS days, from any source. Null when there is none, or
+ * when there is no company to compare.
+ *
+ * The key is computed from the input with the SAME expression that generates
+ * `jobs.company_title_key` (migration 20260930200000_jobs_company_title_key),
+ * which is also the one the scraper's lookup uses, so the three cannot drift.
+ * A copy on a paid source or a job restricted to one profile does not count:
+ * pointing someone at a posting they cannot open would be no answer at all.
+ */
+async function recentSameRole(company: string | null, title: string): Promise<number | null> {
+  if (!company) return null;
+  const rows = await prisma.$queryRaw<{ id: number }[]>`
+    SELECT j.id
+      FROM (SELECT TRIM(REGEXP_REPLACE(LOWER(${company}), '[^a-z0-9]+', ' ')) AS c,
+                   TRIM(REGEXP_REPLACE(LOWER(${title}), '[^a-z0-9]+', ' ')) AS t) AS p
+      JOIN jobs AS j
+        ON p.c <> '' AND j.company_title_key = SHA1(CONCAT(p.c, '|', p.t))
+     WHERE j.created_at >= UTC_TIMESTAMP(3) - INTERVAL ${DUPLICATE_WINDOW_DAYS} DAY
+       AND j.visible_to_profile_id IS NULL
+       AND j.site NOT IN (${Prisma.join([...GATED_SITES])})
+     ORDER BY j.id DESC
+     LIMIT 1`;
+  return rows[0] ? Number(rows[0].id) : null;
+}
+
 /** Thrown when the posting is already in the table, with the id of the row. */
 export class DuplicateJobError extends Error {
   constructor(readonly jobId: number) {
@@ -239,6 +273,10 @@ export const jobService = {
       select: { id: true },
     });
     if (existing) throw new DuplicateJobError(existing.id);
+    // The board-wide rule the scrapers follow: same company and title as a job
+    // added in the last 30 days, from any source, is the same job.
+    const sameRole = await recentSameRole(company, title);
+    if (sameRole) throw new DuplicateJobError(sameRole);
 
     const zone = resolveZone(input.tz);
     // A date with no time means the start of that day WHERE THE USER IS, not
