@@ -20,6 +20,9 @@ const registrable = (h: string) => h.split('.').slice(-2).join('.');
 
 const sameSite = (a: string, b: string) => a === b || registrable(a) === registrable(b);
 
+// Easy Apply from any source, as in the frontend and the jobs.easy_apply column.
+const BOARDS = new Set(['linkedin.com', 'indeed.com']);
+
 async function main() {
   const rows = await prisma.job.findMany({ select: { site: true, jobUrl: true, applyUrl: true } });
 
@@ -30,7 +33,7 @@ async function main() {
     const ah = hostOf(href);
     const jh = hostOf(r.jobUrl);
     if (!ah || !jh) e.unknown++;
-    else if (sameSite(ah, jh)) e.onsite++;
+    else if (sameSite(ah, jh) || BOARDS.has(registrable(ah))) e.onsite++;
     else e.external++;
     tally.set(r.site, e);
   }

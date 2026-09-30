@@ -16,6 +16,17 @@ model Job {
   description String    @db.LongText
   jobUrl      String    @map("job_url") @db.VarChar(1024)
   applyUrl    String?   @map("apply_url") @db.VarChar(2048)
+  /// Whether applying happens on a job board ("Easy Apply") rather than on the
+  /// employer's own site ("Apply Now"): the apply link is on the posting's own
+  /// site, or on LinkedIn or Indeed.
+  ///
+  /// COMPUTED BY THE DATABASE from `applyUrl` and `jobUrl`, as a generated
+  /// column (migration 20260930190000_jobs_easy_apply), so every writer gets it
+  /// right without setting it. Read it; never write it. MariaDB rejects a value
+  /// for a generated column, and Prisma only sends the fields it is given.
+  /// Never null in practice; optional because MariaDB generated columns cannot
+  /// be declared NOT NULL.
+  easyApply   Boolean?  @map("easy_apply")
   company     String?   @db.VarChar(255)
   companyUrl  String?   @map("company_url") @db.VarChar(1024)
   jobType     String?   @map("job_type") @db.VarChar(64)
@@ -102,6 +113,9 @@ model Job {
   /// `site` is in the key so the gated-source clause stays a covering read.
   /// Without it the count behind the list cost 651 ms instead of 7 ms.
   @@index([remote, site, createdAt, id, visibleToProfileId])
+  /// The Easy Apply / Apply Now filter, with and without the remote default.
+  @@index([easyApply, createdAt, id, visibleToProfileId])
+  @@index([remote, easyApply, createdAt, id, visibleToProfileId])
   /// The posted-date filter, and the scrapers' resolve queues.
   @@index([postedAt])
   /// Feeds the location dropdown's GROUP BY. Without it that grouping sorts

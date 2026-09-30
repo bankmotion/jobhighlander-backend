@@ -45,6 +45,7 @@ const listQuerySchema = z.object({
   // Per profile, like applied/discarded/interview: ignored server-side when no
   // profile is selected, because there is nobody to have generated it.
   resume: z.enum(['all', 'generated', 'notgenerated']).default('all'),
+  apply: z.enum(['all', 'easy', 'now']).default('all'),
   // The id paging is pinned to, so inserts cannot shift pages under a reader.
   snapshotId: z.coerce.number().int().positive().optional(),
   posted: z.enum(['all', 'today', '24h', '3d', 'custom']).default('all'),

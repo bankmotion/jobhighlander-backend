@@ -42,6 +42,11 @@ export type InterviewFilter =
 // is only answerable once there is one to answer for.
 export type ResumeFilter = 'all' | 'generated' | 'notgenerated';
 
+// Where applying happens: on a job board ("Easy Apply": the posting's own
+// site, LinkedIn or Indeed) or on the employer's site ("Apply Now"). Not per
+// profile, unlike the filters above: it is a fact about the posting.
+export type ApplyFilter = 'all' | 'easy' | 'now';
+
 export interface ListJobsParams {
   sites?: string[];
   remote?: boolean;
@@ -68,6 +73,7 @@ export interface ListJobsParams {
   rejected?: RejectedFilter;
   interview?: InterviewFilter;
   resume?: ResumeFilter;
+  apply?: ApplyFilter;
   /**
    * Highest job id the reader's paging is pinned to.
    *
@@ -95,6 +101,19 @@ export interface ListJobsParams {
 }
 
 export type PostedFilter = 'all' | 'today' | '24h' | '3d' | 'custom';
+
+/**
+ * Narrow to Easy Apply or Apply Now postings.
+ *
+ * Reads `easyApply`, which the database computes from the two links (see the
+ * schema), rather than repeating the rule here: the same column labels the
+ * button, so the filter and the label cannot disagree about a posting.
+ */
+function applyWhere(params: ListJobsParams): Prisma.JobWhereInput {
+  if (params.apply === 'easy') return { easyApply: true };
+  if (params.apply === 'now') return { easyApply: false };
+  return {};
+}
 
 /**
  * Narrow by whether SOMEONE ELSE has already applied.
@@ -335,6 +354,7 @@ export const jobService = {
       ...rejectedWhere,
       ...interviewWhere,
       ...resumeWhere,
+      ...applyWhere(params),
       // Everything at or below the pin. Applied to the count as well as the
       // rows, so "Page 4 of 9" cannot describe a different set than the one
       // being paged through.
@@ -525,6 +545,7 @@ export const jobService = {
         ...rejectedWhere,
         ...interviewWhere,
         ...resumeWhere,
+        ...applyWhere(params),
         ...(q
           ? {
               OR: [
