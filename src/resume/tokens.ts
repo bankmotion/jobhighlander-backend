@@ -26,6 +26,15 @@ export const FONT_PAIRS = {
     display: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
     body: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
   },
+  // Arial for headings, Calibri for text. The body stack names Carlito, its
+  // metric-compatible stand-in, because the PDF is rendered on the server and
+  // Calibri itself is only present where Office is installed. Without either,
+  // it falls through to the same sans the 'sans-modern' pair uses.
+  'sans-calibri': {
+    name: 'Arial / Calibri',
+    display: 'Arial, "Helvetica Neue", Helvetica, sans-serif',
+    body: 'Calibri, Carlito, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+  },
   'slab-sans': {
     name: 'Palatino / Helvetica',
     display: '"Palatino Linotype", Palatino, "Book Antiqua", serif',

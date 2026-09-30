@@ -5,13 +5,25 @@ import { FALLBACK_PRESET, LAYOUTS, type Preset } from '../resume/templates/regis
 import { ACCENTS, DENSITIES, FONT_PAIRS } from '../resume/tokens';
 import { isBackground } from '../resume/backgrounds';
 
+/** The group for templates built to match a reference resume ("custom-..."). */
+const CUSTOM_CATEGORY = 'custom';
+
 export const presetService = {
   async list(): Promise<Preset[]> {
     const rows = await prisma.templatePreset.findMany({
       where: { archived: false },
       orderBy: [{ category: 'asc' }, { sortOrder: 'asc' }],
     });
-    return rows.length ? rows.map(toPreset) : [FALLBACK_PRESET];
+    // Custom templates lead. They were built on request to match a specific
+    // resume, so they are what their owner came to the page for, and an
+    // alphabetical sort would file them third, under Classic and Creative.
+    // Done here rather than in the page so the generator's dropdown, which
+    // reads the same list, agrees with it.
+    const ordered = [
+      ...rows.filter((r) => r.category === CUSTOM_CATEGORY),
+      ...rows.filter((r) => r.category !== CUSTOM_CATEGORY),
+    ];
+    return ordered.length ? ordered.map(toPreset) : [FALLBACK_PRESET];
   },
 
   async get(key: string | null | undefined): Promise<Preset> {
@@ -162,6 +174,12 @@ const SEED = [
     accent: ACCENTS.slate, fontPair: 'sans-modern', density: 'compact', atsSafe: true, sortOrder: 4 },
   { key: 'professional-ink', name: 'Executive Ink', category: 'professional', layout: 'professional',
     accent: ACCENTS.ink, fontPair: 'serif-classic', density: 'airy', atsSafe: true, sortOrder: 5 },
+
+  // custom - templates built to match a specific reference resume, keyed
+  // "custom-<layout>". This one: centred header and titles, each role led by
+  // its impact line.
+  { key: 'custom-centered', name: 'Custom Centered', category: 'custom', layout: 'centered',
+    accent: ACCENTS.ink, fontPair: 'sans-calibri', density: 'regular', atsSafe: true, sortOrder: 1 },
 
   // creative - coloured sidebar. atsSafe is FALSE: extraction reads the sidebar
   // before the experience, and no markup change alters that.

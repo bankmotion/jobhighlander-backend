@@ -3,6 +3,7 @@ import { ClassicLayout, CLASSIC_CSS } from '../layouts/classic';
 import { ModernLayout, MODERN_CSS } from '../layouts/modern';
 import { ProfessionalLayout, PROFESSIONAL_CSS } from '../layouts/professional';
 import { CreativeLayout, CREATIVE_CSS } from '../layouts/creative';
+import { CenteredLayout, CENTERED_CSS } from '../layouts/centered';
 import type { TemplateProps } from '../layouts/types';
 
 export type { TemplateProps };
@@ -18,6 +19,8 @@ export const LAYOUTS = {
   classic: { name: 'Classic', Component: ClassicLayout, css: CLASSIC_CSS },
   modern: { name: 'Modern', Component: ModernLayout, css: MODERN_CSS },
   professional: { name: 'Professional', Component: ProfessionalLayout, css: PROFESSIONAL_CSS },
+  // Centred header and section titles; each role opens with its impact line.
+  centered: { name: 'Centered', Component: CenteredLayout, css: CENTERED_CSS },
   // Two-column: extraction follows page geometry, so the sidebar is always
   // read before the experience. Presets here must set atsSafe: false.
   creative: { name: 'Creative', Component: CreativeLayout, css: CREATIVE_CSS },

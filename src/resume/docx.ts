@@ -16,6 +16,7 @@ import {
 } from 'docx';
 import type { TailoredResume } from '../schemas/resume.schema';
 import { groupSkills } from './skills';
+import { splitContact } from './contact';
 import { PAGE_PX, type PageSize, type Preset } from './templates/registry';
 import { resolveTokens, type ResolvedTokens } from './tokens';
 
@@ -58,7 +59,13 @@ interface Ctx {
   accent: string;
 }
 
-function headLine(ctx: Ctx, left: TextRun[], right: string, spacingBefore = 0): Paragraph {
+function headLine(
+  ctx: Ctx,
+  left: TextRun[],
+  right: string,
+  spacingBefore = 0,
+  rightStyle: { size: number; color: string } = { size: 9.5, color: '555555' },
+): Paragraph {
   return new Paragraph({
     tabStops: [{ type: TabStopType.RIGHT, position: ctx.contentWidth }],
     spacing: { before: spacingBefore, after: 0 },
@@ -70,8 +77,8 @@ function headLine(ctx: Ctx, left: TextRun[], right: string, spacingBefore = 0): 
             new TextRun({
               text: right,
               font: ctx.fonts.body,
-              size: halfPt(9.5),
-              color: '555555',
+              size: halfPt(rightStyle.size),
+              color: rightStyle.color,
             }),
           ]
         : []),
@@ -109,7 +116,7 @@ function impactLine(ctx: Ctx, text: string) {
   });
 }
 
-type HeadingStyle = 'rule' | 'plain' | 'band';
+type HeadingStyle = 'rule' | 'plain' | 'band' | 'centred';
 
 function heading(ctx: Ctx, text: string, style: HeadingStyle, size: number): Paragraph {
   const common = {
@@ -129,6 +136,16 @@ function heading(ctx: Ctx, text: string, style: HeadingStyle, size: number): Par
     return new Paragraph({
       ...common,
       border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: hex(ctx.accent), space: 2 } },
+    });
+  }
+  if (style === 'centred') {
+    // More air above and a wider gap to the rule than 'rule': the rule here
+    // belongs to the content under it, as in the page layout.
+    return new Paragraph({
+      ...common,
+      alignment: AlignmentType.CENTER,
+      spacing: { before: px(ctx.t.density.sectionGap + 12), after: px(10) },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: hex(ctx.accent), space: 9 } },
     });
   }
   if (style === 'band') {
@@ -312,6 +329,124 @@ function professionalBody(ctx: Ctx, r: TailoredResume, name: string, contact: st
   return out;
 }
 
+/**
+ * The Word twin of layouts/centered.tsx, in the same order for the same
+ * reasons: no summary heading, employer before title, impact before the
+ * bullets and without a label, skills last.
+ *
+ * It does not go through `experience()`. That helper appends the impact AFTER
+ * the bullets under an "Impact:" label, which is right for the other three
+ * single-column layouts and exactly what this one exists to do differently.
+ */
+function centeredBody(ctx: Ctx, r: TailoredResume, name: string, contact: string): Paragraph[] {
+  const size = halfPt(ctx.t.density.fontSize);
+  const line = Math.round(ctx.t.density.lineHeight * 240);
+  const date = { size: ctx.t.density.fontSize, color: '111111' };
+  const { details, links } = splitContact(contact);
+
+  // Collected first because the rule sits under whichever line comes last, and
+  // that depends on what the profile holds.
+  const head: TextRun[][] = [
+    [new TextRun({ text: name, bold: true, font: ctx.fonts.display, size: halfPt(20) })],
+  ];
+  if (r.headline) {
+    head.push([
+      new TextRun({
+        text: r.headline.toUpperCase(),
+        bold: true,
+        font: ctx.fonts.display,
+        size: halfPt(10.5),
+        color: '555555',
+      }),
+    ]);
+  }
+  for (const text of [details, ...links]) {
+    if (text) head.push([new TextRun({ text, font: ctx.fonts.body, size })]);
+  }
+
+  const out: Paragraph[] = head.map((children, i) => {
+    const last = i === head.length - 1;
+    return new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: last ? px(12) : px(2) },
+      ...(last
+        ? { border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: '111111', space: 8 } } }
+        : {}),
+      children,
+    });
+  });
+
+  if (r.summary) {
+    out.push(
+      new Paragraph({
+        alignment: AlignmentType.JUSTIFIED,
+        spacing: { before: 0, after: 0, line },
+        children: richRuns(r.summary, { font: ctx.fonts.body, size }),
+      }),
+    );
+  }
+
+  const withLocation = (text: string, location: string): TextRun[] => [
+    new TextRun({ text, font: ctx.fonts.body, size }),
+    ...(location
+      ? [new TextRun({ text: `, ${location}`, font: ctx.fonts.body, size, color: '444444' })]
+      : []),
+  ];
+
+  if (r.experience.length) {
+    out.push(heading(ctx, 'Professional Experience', 'centred', 13));
+    r.experience.forEach((e, i) => {
+      out.push(
+        headLine(ctx, withLocation(e.company, e.location), e.period, i > 0 ? px(ctx.t.density.entryGap) : 0, date),
+      );
+      if (e.title) {
+        out.push(
+          new Paragraph({
+            keepNext: true, // the title stays with the line that explains it
+            spacing: { before: px(1), after: 0 },
+            children: [new TextRun({ text: e.title, bold: true, font: ctx.fonts.display, size })],
+          }),
+        );
+      }
+      if (e.impact) {
+        out.push(
+          new Paragraph({
+            keepNext: true,
+            spacing: { before: px(1), after: px(3), line },
+            children: richRuns(e.impact, { font: ctx.fonts.body, size }),
+          }),
+        );
+      }
+      e.bullets.forEach((b) => out.push(bullet(ctx, b.text)));
+    });
+  }
+
+  if (r.education.length) {
+    out.push(heading(ctx, 'Education', 'centred', 13));
+    r.education.forEach((ed, i) => {
+      out.push(headLine(ctx, withLocation(ed.institution, ed.location), ed.period, i > 0 ? px(2) : 0, date));
+      if (ed.degree) out.push(body(ctx, ed.degree));
+    });
+  }
+
+  if (r.skills.length) {
+    out.push(heading(ctx, 'Professional Skills', 'centred', 13));
+    for (const g of groupSkills(r.skills)) {
+      out.push(
+        new Paragraph({
+          numbering: { reference: 'resume-bullets', level: 0 },
+          spacing: { before: 0, after: px(2), line },
+          children: [
+            new TextRun({ text: `${g.category}: `, bold: true, font: ctx.fonts.body, size }),
+            new TextRun({ text: g.names.join(', '), font: ctx.fonts.body, size }),
+          ],
+        }),
+      );
+    }
+  }
+  return out;
+}
+
 function creativeDoc(ctx: Ctx, r: TailoredResume, name: string, contact: string, pageSize: PageSize) {
   const white = 'FFFFFF';
   const sideWidth = 34;
@@ -425,10 +560,14 @@ export async function renderResumeDocx({
   const pad = px(t.density.pad);
   const layout = preset?.layout ?? 'classic';
 
-  const ctx: Ctx = { t, fonts, accent: t.accent, contentWidth: page.width - pad * 2 };
+  // The centred layout sets a narrower column than the rest (see its CSS). The
+  // right-hand tab stop is measured from the same figure, or the dates would
+  // overshoot the margin they are meant to align to.
+  const side = pad + (layout === 'centered' ? px(16) : 0);
+  const ctx: Ctx = { t, fonts, accent: t.accent, contentWidth: page.width - side * 2 };
 
   let children: (Paragraph | Table)[];
-  let margin = { top: pad, right: pad, bottom: pad, left: pad };
+  let margin = { top: pad, right: side, bottom: pad, left: side };
 
   if (layout === 'creative') {
     const c = creativeDoc(ctx, resume, name, contact, pageSize);
@@ -438,6 +577,8 @@ export async function renderResumeDocx({
     children = modernBody(ctx, resume, name, contact);
   } else if (layout === 'professional') {
     children = professionalBody(ctx, resume, name, contact);
+  } else if (layout === 'centered') {
+    children = centeredBody(ctx, resume, name, contact);
   } else {
     children = classicBody(ctx, resume, name, contact);
   }
