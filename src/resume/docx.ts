@@ -33,6 +33,10 @@ export function wordFonts(tokens: ResolvedTokens): { display: string; body: stri
   const pick = (stack: string): string => {
     const first = stack.split(',')[0].replace(/["']/g, '').trim();
     if (/^Helvetica/i.test(first)) return 'Arial';
+    // Carlito is what the PDF embeds in place of Calibri. A Word file embeds
+    // nothing and is opened in Word, which has the real one and almost never
+    // has Carlito, so naming Carlito there would get a substitute font.
+    if (/^Carlito$/i.test(first)) return 'Calibri';
     return first;
   };
   return { display: pick(tokens.fonts.display), body: pick(tokens.fonts.body) };

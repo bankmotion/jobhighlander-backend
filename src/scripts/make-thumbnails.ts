@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma';
 import { logger } from '../services/logger.service';
 import { presetService } from '../services/preset.service';
 import { renderResumeHtml } from '../resume/render';
+import { waitForFonts } from '../resume/pdf';
 import { PAGE_PX } from '../resume/templates/registry';
 import type { TailoredResume } from '../schemas/resume.schema';
 
@@ -79,6 +80,7 @@ async function main() {
       pageSize: 'letter',
     });
     await page.setContent(html, { waitUntil: 'domcontentloaded' });
+    await waitForFonts(page);
     const shot = await page.screenshot({ type: 'webp', quality: 82 });
     const file = join(OUT, `${preset.key}.webp`);
     await writeFile(file, shot);

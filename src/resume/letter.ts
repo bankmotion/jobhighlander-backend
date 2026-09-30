@@ -1,5 +1,6 @@
 import { PAGE_PX, FALLBACK_PRESET, type PageSize, type Preset } from './templates/registry';
 import { resolveTokens, tokensToCss } from './tokens';
+import { fontFaceCss } from './fonts';
 
 export interface LetterRenderInput {
   // The assembled letter from `assembleLetter` — date, recipient, salutation,
@@ -30,6 +31,8 @@ export function renderCoverLetterHtml({
   const page = PAGE_PX[pageSize] ?? PAGE_PX.letter;
   const resolved = resolveTokens(p);
   const tokens = tokensToCss(resolved);
+  // The letter shares the resume's stationery, its embedded font included.
+  const faces = fontFaceCss(resolved.fonts.embed);
 
   // Same reasoning as the resume layouts: `@page` sits outside the document
   // tree, so var(--pad) never resolves there and the browser drops the
@@ -44,7 +47,7 @@ export function renderCoverLetterHtml({
 <head>
 <meta charset="utf-8">
 <title>${escapeHtml(name || 'Cover letter')}</title>
-<style>:root{${tokens}}</style>
+${faces ? `<style>${faces}</style>\n` : ''}<style>:root{${tokens}}</style>
 <style>${css}</style>
 </head>
 <body><div class="page">

@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { TailoredResume } from '../schemas/resume.schema';
 import { getLayout, PAGE_PX, FALLBACK_PRESET, type PageSize, type Preset } from './templates/registry';
 import { resolveTokens, tokensToCss } from './tokens';
+import { fontFaceCss } from './fonts';
 import { backgroundCss } from './backgrounds';
 
 export interface RenderInput {
@@ -43,6 +44,10 @@ export function renderResumeHtml({
   // Tokens come first so the layout's own rules can reference them, and are
   // scoped to :root so a layout never has to know which preset produced them.
   const tokens = tokensToCss(resolved);
+  // Empty for every pair that embeds nothing, and then no block is written at
+  // all, so those documents are byte-for-byte what they were and keep their
+  // place in the PDF cache.
+  const faces = fontFaceCss(resolved.fonts.embed);
 
   // Appended AFTER the layout's rules, never merged into them. The layer needs
   // to win over `html, body { background: #fff }`, and a layout must stay
@@ -56,7 +61,7 @@ export function renderResumeHtml({
 <head>
 <meta charset="utf-8">
 <title>${escapeHtml(name || 'Resume')}</title>
-<style>:root{${tokens}}</style>
+${faces ? `<style>${faces}</style>\n` : ''}<style>:root{${tokens}}</style>
 <style>${css}</style>
 <style>${bg}</style>
 </head>

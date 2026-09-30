@@ -4,6 +4,7 @@ import { chromium } from 'playwright';
 import { prisma } from '../lib/prisma';
 import { logger } from '../services/logger.service';
 import { renderResumeHtml } from '../resume/render';
+import { waitForFonts } from '../resume/pdf';
 import { PAGE_PX } from '../resume/templates/registry';
 import { presetService } from '../services/preset.service';
 import { BACKGROUNDS } from '../resume/backgrounds';
@@ -95,6 +96,7 @@ async function main() {
       background: bg.key,
     });
     await page.setContent(html, { waitUntil: 'domcontentloaded' });
+    await waitForFonts(page);
     const shot = await page.screenshot({ type: 'webp', quality: 82 });
     const file = join(OUT, `${bg.key}.webp`);
     await writeFile(file, shot);

@@ -1,8 +1,14 @@
+import type { EmbeddedFamily } from './fonts';
 
 export interface FontPair {
   name: string;
   display: string;
   body: string;
+  /**
+   * Families this pair ships inside the document instead of hoping they are
+   * installed where it is rendered. See fonts.ts.
+   */
+  embed?: readonly EmbeddedFamily[];
 }
 
 export const FONT_PAIRS = {
@@ -26,14 +32,19 @@ export const FONT_PAIRS = {
     display: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
     body: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
   },
-  // Arial for headings, Calibri for text. The body stack names Carlito, its
-  // metric-compatible stand-in, because the PDF is rendered on the server and
-  // Calibri itself is only present where Office is installed. Without either,
-  // it falls through to the same sans the 'sans-modern' pair uses.
+  // Arial for headings, Calibri for text.
+  //
+  // The body is set in Carlito, Calibri's open-licence twin, and Carlito is
+  // EMBEDDED in the document. It leads the stack on purpose, ahead of Calibri
+  // itself: a machine that happens to have Calibri would otherwise render
+  // differently from the server, which never will, and a resume checked on a
+  // laptop should be the resume the server sends. Calibri stays in the stack
+  // only as the fallback if the embedded files cannot be read.
   'sans-calibri': {
     name: 'Arial / Calibri',
     display: 'Arial, "Helvetica Neue", Helvetica, sans-serif',
-    body: 'Calibri, Carlito, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+    body: 'Carlito, Calibri, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+    embed: ['Carlito'],
   },
   'slab-sans': {
     name: 'Palatino / Helvetica',
