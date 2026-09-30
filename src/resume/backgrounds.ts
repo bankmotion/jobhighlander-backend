@@ -1,13 +1,12 @@
 /**
  * Decorative page backgrounds for a rendered resume.
  *
- * Three rules shape everything here, and all three come from how the PDF is
+ * Five rules shape everything here, and all five come from how the PDF is
  * actually produced:
  *
  * 1. SELF-CONTAINED. `htmlToPdf` loads the document with `domcontentloaded`
  *    and no network, so an external image would render as a blank gap rather
- *    than fail loudly. Every pattern is an inline SVG data URI or a CSS
- *    gradient.
+ *    than fail loudly. Every pattern is an inline SVG or an inline image.
  *
  * 2. PAINTED ON EVERY PAGE. The layouts are one continuous flow that Chromium
  *    paginates, not one element per page, so there is nothing per-page to hang
@@ -20,18 +19,49 @@
  *    accent-coloured on purpose: a data URI cannot read `var(--accent)`, and a
  *    pattern baked in one preset's colour clashes with the other three.
  *
+ * 4. THE SAME IN EVERY VIEWER. A CSS gradient is NOT sent to the PDF as a
+ *    gradient. Chromium writes it as a shading with a soft mask, which its own
+ *    viewer draws correctly and pdf.js does not: pdf.js 4 paints the whole page
+ *    pink, pdf.js 6 drops the pattern. pdf.js is Firefox's viewer and the
+ *    preview in a great many web portals, so a resume sent with such a
+ *    background could open pink on a recruiter's screen. Gradients are
+ *    therefore only ever a way to DESCRIBE a pattern here. Anything described
+ *    with one is marked `raster` and goes out as a pre-rendered image, which
+ *    every viewer draws alike. Plain vector shapes are safe and stay vector.
+ *
+ * 5. THE PAGE MARGINS BELONG TO THE PAGE, NOT TO THE LAYER. The fixed layer
+ *    covers the text area only; the top and bottom margin of every sheet stay
+ *    the colour of the page box. On white that is invisible. A tinted or dark
+ *    background would print with a white band at the head and foot of each
+ *    page, so its colour is ALSO set on `@page`, which takes a solid colour and
+ *    nothing else. That is why `base` is a plain colour, and why a pattern on a
+ *    coloured page fades out before it reaches the margin (see `fade`).
+ *
  * ATS extraction is unaffected: these add no text and no elements to the
  * document flow, so a parser reading the PDF sees exactly what it saw before.
  * That is why a background is offered even on presets marked `atsSafe`.
  *
- * To add one: write the SVG (or gradient), add a registry entry. The picker
- * and the request validator both read this list, so there is nothing else to
- * update.
+ * To add one: write the SVG (or gradient), add a registry entry, and if it is
+ * marked `raster`, run `npx tsx src/scripts/gen-raster.ts`. The picker and the
+ * request validator both read this list, so there is nothing else to update.
  */
 
 import { RASTER } from './backgrounds.raster';
 
-export type BackgroundCategory = 'plain' | 'dots' | 'geometric' | 'lines' | 'accent';
+export type BackgroundCategory =
+  | 'plain'
+  | 'tint'
+  | 'dots'
+  | 'geometric'
+  | 'lines'
+  | 'accent'
+  | 'dark';
+
+/** How a background that cannot go out as vector is pre-rendered. */
+export interface RasterSpec {
+  /** PNG for line work and dots, which must stay crisp. JPEG for soft glows. */
+  format: 'png' | 'jpeg';
+}
 
 export interface BackgroundDef {
   key: string;
@@ -41,8 +71,19 @@ export interface BackgroundDef {
   description: string;
   /** Groups the picker. Plain sorts first. */
   category: BackgroundCategory;
-  /** CSS appended after the layout's own rules. Empty for `none`. */
+  /**
+   * The pattern layer, as CSS. Empty for a page that is only a colour.
+   *
+   * This is the SOURCE of the pattern. When `raster` is set it is what
+   * gen-raster.ts renders, and the image is what reaches the document.
+   */
   css: string;
+  /** The page colour under the pattern. White when absent. Solid colours only. */
+  base?: string;
+  /** A dark page. The templates' text and rules are switched to light. */
+  dark?: boolean;
+  /** Present when the pattern must be delivered as an image. See rule 4 above. */
+  raster?: RasterSpec;
 }
 
 /**
@@ -100,16 +141,13 @@ function uri(svg: string): string {
 }
 
 /**
- * A pattern built from repeating CSS gradients.
+ * A pattern described with CSS gradients.
  *
- * Strongly preferred over an SVG tile wherever the shape allows it, for one
- * measured reason: Chromium flattens a repeated SVG into one drawing operation
- * per repetition when it prints, while a repeating gradient stays a single
- * fill. On the same three-page resume that is +3 KB against +1,500 KB, and the
- * two are visually indistinguishable.
- *
- * Straight lines at any angle work. Dots do not -- a radial-gradient field
- * measured +345 KB, because every dot is again its own operation.
+ * The most compact way to WRITE straight lines, bands and soft glows, and
+ * never the way they are delivered: every entry built with this is marked
+ * `raster`. A gradient printed directly came out small (+3 KB) and correct in
+ * Chromium's own viewer, which is why it was used that way at first, and pink
+ * or missing in pdf.js, which is why it no longer is.
  */
 function grad(image: string, opacity = 1, size?: string): string {
   return `background-image: ${image};
@@ -130,9 +168,11 @@ const inner = (svg: string): string =>
  * draws: the hexagon PDF measured 1.4 MB against 71 KB for the plain page, on
  * a file people attach to job applications.
  *
- * Declaring the repetition as an SVG `<pattern>` instead means one image and
- * one draw, with the tiling resolved inside it. Identical output, and the same
- * PDF came back at a few KB over plain.
+ * Declaring the repetition as an SVG `<pattern>` instead gives one image with
+ * the tiling resolved inside it, which is the right shape for a source
+ * drawing. It did NOT make the printed file small: Chromium still expands the
+ * pattern when it prints. So every entry built with this is marked `raster`
+ * and is delivered as one pre-rendered image.
  */
 function tile(svg: string, w: number, h: number, opacity = 1): string {
   const sheet = `<svg xmlns='http://www.w3.org/2000/svg' width='816' height='1056' viewBox='0 0 816 1056'>
@@ -163,9 +203,84 @@ function corner(svg: string, position: string, w: number, h: number, opacity = 1
     opacity: ${opacity};`;
 }
 
+/** `#rrggbb` as an rgba() with the given alpha. */
+function rgba(hex: string, alpha: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+/**
+ * A top layer that eases a pattern back to the page colour at the head and
+ * foot of the text area.
+ *
+ * The margins above and below are painted by the page box in the flat `base`
+ * colour. A pattern running at full strength up to that line would stop dead
+ * against it, and every page would show a band at the top and bottom. Faded,
+ * the pattern has already reached the base colour when it meets the margin,
+ * and there is no line to see.
+ *
+ * Written as the base colour at zero alpha rather than `transparent`, so the
+ * ramp never passes through a grey on its way out.
+ */
+function fade(base: string): string {
+  return `linear-gradient(to bottom, ${base} 0, ${rgba(base, 0)} 9%, ${rgba(base, 0)} 91%, ${base} 100%)`;
+}
+
+/** The page colour, on the document and on the page box, so margins match. */
+function pageColour(base: string): string {
+  return `
+  @page { background-color: ${base}; }
+  html, body {
+    background: ${base} !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+`;
+}
+
+/**
+ * Light text for a dark page.
+ *
+ * Every template hard-codes dark text, dark rules and a dark accent, each in
+ * its own places. Overriding them one by one would need a rule per template
+ * and would miss the next template added. So everything inside the page is
+ * set light in one sweep, then the secondary details are stepped down and the
+ * bold runs stepped up, which restores the hierarchy the greys gave on white.
+ *
+ * Backgrounds the templates paint themselves (the sidebar in one, the heading
+ * band in another) are left alone: they are tinted from the accent and sit
+ * naturally on a dark page.
+ */
+const LIGHT_TEXT = `
+  .page, .page * {
+    color: #eef1f5 !important;
+    border-color: rgba(255, 255, 255, 0.38) !important;
+  }
+  .page .contact, .page .headline, .page .period, .page .loc, .page .org, .page .impact {
+    color: #c3cbd6 !important;
+  }
+  .page strong, .page b { color: #ffffff !important; }
+`;
+
 // Neutrals used throughout. Written as plain hex; `uri()` escapes them.
 const INK = '#a9b6c8'; //   line work
 const DOT = '#93a3ba'; //   filled shapes
+
+// Page colours. Named because each is used twice: as the page's `base` and
+// inside the pattern that has to fade back to it.
+const WHITE = '#ffffff';
+const CREAM = '#fbf7ee';
+const ICE = '#f0f5fb';
+const CHARCOAL = '#15181d';
+const NAVY = '#0e1a2b';
+const SLATE = '#1f242c';
+const CARBON = '#111316';
+const NIGHT = '#0f1419';
+const EMBER = '#1a1412';
+
+/** An existing drawing in other colours, for use on a dark page. */
+const recolour = (svg: string, ink: string, dot: string = ink): string =>
+  svg.split(INK).join(ink).split(DOT).join(dot);
 
 /* ------------------------------------------------------------------ dots -- */
 
@@ -312,27 +427,31 @@ export const BACKGROUNDS: readonly BackgroundDef[] = [
     description: 'A dot field fading diagonally across the page.',
     category: 'dots',
     css: layer(full(DOT_FLOW)),
+    raster: { format: 'png' },
   },
   {
     key: 'dot-grid',
     name: 'Dot Grid',
     description: 'An even dot grid, like plotting paper.',
     category: 'dots',
-    css: layer(tile(DOT_GRID, 20, 20, 0.75)),
+    css: layer(tile(DOT_GRID, 20, 20, 0.5625)),
+    raster: { format: 'png' },
   },
   {
     key: 'halftone',
     name: 'Halftone',
     description: 'Print-style dots, densest at the top-left and fading out.',
     category: 'dots',
-    css: layer(full(HALFTONE, 0.7)),
+    css: layer(full(HALFTONE, 0.49)),
+    raster: { format: 'png' },
   },
   {
     key: 'confetti',
     name: 'Confetti',
     description: 'Small scattered marks. Playful — best for creative roles.',
     category: 'dots',
-    css: layer(tile(CONFETTI, 120, 120, 0.7)),
+    css: layer(tile(CONFETTI, 120, 120, 0.49)),
+    raster: { format: 'png' },
   },
 
   // geometric
@@ -341,7 +460,8 @@ export const BACKGROUNDS: readonly BackgroundDef[] = [
     name: 'Hexagon',
     description: 'A light honeycomb lattice across the whole page.',
     category: 'geometric',
-    css: layer(tile(HEXAGON, 56, 48, 0.75)),
+    css: layer(tile(HEXAGON, 56, 48, 0.5625)),
+    raster: { format: 'png' },
   },
   {
     key: 'triangles',
@@ -351,6 +471,7 @@ export const BACKGROUNDS: readonly BackgroundDef[] = [
     css: layer(grad(`repeating-linear-gradient(60deg, #bcc7d6 0 0.7px, transparent 0.7px 34px),
       repeating-linear-gradient(-60deg, #bcc7d6 0 0.7px, transparent 0.7px 34px),
       repeating-linear-gradient(0deg, #bcc7d6 0 0.7px, transparent 0.7px 30px)`, 0.7)),
+    raster: { format: 'png' },
   },
   {
     key: 'diamond',
@@ -359,6 +480,7 @@ export const BACKGROUNDS: readonly BackgroundDef[] = [
     category: 'geometric',
     css: layer(grad(`repeating-linear-gradient(45deg, #bcc7d6 0 0.7px, transparent 0.7px 28px),
       repeating-linear-gradient(-45deg, #bcc7d6 0 0.7px, transparent 0.7px 28px)`, 0.7)),
+    raster: { format: 'png' },
   },
   {
     key: 'isometric',
@@ -368,20 +490,23 @@ export const BACKGROUNDS: readonly BackgroundDef[] = [
     css: layer(grad(`repeating-linear-gradient(30deg, #bcc7d6 0 0.7px, transparent 0.7px 30px),
       repeating-linear-gradient(-30deg, #bcc7d6 0 0.7px, transparent 0.7px 30px),
       repeating-linear-gradient(90deg, #bcc7d6 0 0.7px, transparent 0.7px 52px)`, 0.7)),
+    raster: { format: 'png' },
   },
   {
     key: 'circuit',
     name: 'Circuit',
     description: 'Board traces and junctions. Suits engineering roles.',
     category: 'geometric',
-    css: layer(tile(CIRCUIT, 90, 90, 0.7)),
+    css: layer(tile(CIRCUIT, 90, 90, 0.49)),
+    raster: { format: 'png' },
   },
   {
     key: 'scales',
     name: 'Scales',
     description: 'Overlapping arcs in a fish-scale lattice.',
     category: 'geometric',
-    css: layer(tile(SCALES, 40, 20, 0.7)),
+    css: layer(tile(SCALES, 40, 20, 0.49)),
+    raster: { format: 'png' },
   },
 
   // lines
@@ -391,6 +516,7 @@ export const BACKGROUNDS: readonly BackgroundDef[] = [
     description: 'Fine 45-degree stripes.',
     category: 'lines',
     css: layer(grad(`repeating-linear-gradient(45deg, #bcc7d6 0 1px, transparent 1px 16px)`, 0.65)),
+    raster: { format: 'png' },
   },
   {
     key: 'graph-paper',
@@ -399,6 +525,7 @@ export const BACKGROUNDS: readonly BackgroundDef[] = [
     category: 'lines',
     css: layer(grad(`repeating-linear-gradient(0deg, #bcc7d6 0 0.5px, transparent 0.5px 8px),
       repeating-linear-gradient(90deg, #bcc7d6 0 0.5px, transparent 0.5px 8px)`, 0.7)),
+    raster: { format: 'png' },
   },
   {
     key: 'crosshatch',
@@ -407,6 +534,7 @@ export const BACKGROUNDS: readonly BackgroundDef[] = [
     category: 'lines',
     css: layer(grad(`repeating-linear-gradient(45deg, #bcc7d6 0 0.6px, transparent 0.6px 12px),
       repeating-linear-gradient(-45deg, #bcc7d6 0 0.6px, transparent 0.6px 12px)`, 0.6)),
+    raster: { format: 'png' },
   },
   {
     key: 'topography',
@@ -420,7 +548,8 @@ export const BACKGROUNDS: readonly BackgroundDef[] = [
     name: 'Waves',
     description: 'Soft horizontal wave lines.',
     category: 'lines',
-    css: layer(tile(WAVES, 80, 28, 0.65)),
+    css: layer(tile(WAVES, 80, 28, 0.4225)),
+    raster: { format: 'png' },
   },
   {
     key: 'pinstripe',
@@ -428,6 +557,7 @@ export const BACKGROUNDS: readonly BackgroundDef[] = [
     description: 'Narrow vertical rules. The most conservative of the textures.',
     category: 'lines',
     css: layer(grad(`repeating-linear-gradient(90deg, #bcc7d6 0 1px, transparent 1px 10px)`, 0.6)),
+    raster: { format: 'png' },
   },
 
   // accent — decoration at an edge rather than across the text
@@ -467,6 +597,346 @@ export const BACKGROUNDS: readonly BackgroundDef[] = [
       radial-gradient(760px 520px at 100% 0%, rgba(147,163,186,0.20), rgba(147,163,186,0) 70%),
       radial-gradient(620px 460px at 0% 100%, rgba(147,163,186,0.14), rgba(147,163,186,0) 70%);`,
     ),
+    raster: { format: 'jpeg' },
+  },
+  // tint -- a soft page colour and nothing else. No layer, no image: the colour
+  // sits on the page box, so it costs nothing and reaches every edge.
+  {
+    key: 'tint-cream',
+    name: 'Cream Paper',
+    description: 'A warm off-white, like good stationery.',
+    category: 'tint',
+    css: '',
+    base: CREAM,
+  },
+  {
+    key: 'tint-ice',
+    name: 'Ice Blue',
+    description: 'A cool, barely-there blue.',
+    category: 'tint',
+    css: '',
+    base: ICE,
+  },
+  {
+    key: 'tint-sage',
+    name: 'Sage',
+    description: 'A soft grey-green.',
+    category: 'tint',
+    css: '',
+    base: '#f1f6f0',
+  },
+  {
+    key: 'tint-blush',
+    name: 'Blush',
+    description: 'A faint warm pink.',
+    category: 'tint',
+    css: '',
+    base: '#fbf2f1',
+  },
+  {
+    key: 'tint-stone',
+    name: 'Warm Grey',
+    description: 'A neutral stone grey. The quietest of the tints.',
+    category: 'tint',
+    css: '',
+    base: '#f4f3f0',
+  },
+  {
+    key: 'tint-lavender',
+    name: 'Lavender',
+    description: 'A pale violet wash.',
+    category: 'tint',
+    css: '',
+    base: '#f5f3fb',
+  },
+
+  // more light patterns
+  {
+    key: 'notebook',
+    name: 'Notebook',
+    description: 'Ruled lines and a margin line, like a page from a notebook.',
+    category: 'lines',
+    css: layer(
+      grad(`${fade(WHITE)},
+      linear-gradient(90deg, transparent 40px, rgba(226, 150, 150, 0.55) 40px 41px, transparent 41px),
+      repeating-linear-gradient(0deg, rgba(150, 176, 214, 0.55) 0 1px, transparent 1px 26px)`),
+    ),
+    raster: { format: 'png' },
+  },
+  {
+    key: 'blueprint',
+    name: 'Blueprint',
+    description: 'A blue drafting grid on a pale blue page.',
+    category: 'lines',
+    base: ICE,
+    css: layer(
+      grad(`${fade(ICE)},
+      repeating-linear-gradient(0deg, rgba(74, 118, 184, 0.20) 0 1px, transparent 1px 50px),
+      repeating-linear-gradient(90deg, rgba(74, 118, 184, 0.20) 0 1px, transparent 1px 50px),
+      repeating-linear-gradient(0deg, rgba(74, 118, 184, 0.09) 0 1px, transparent 1px 10px),
+      repeating-linear-gradient(90deg, rgba(74, 118, 184, 0.09) 0 1px, transparent 1px 10px)`),
+    ),
+    raster: { format: 'png' },
+  },
+  {
+    key: 'linen',
+    name: 'Linen',
+    description: 'A fine woven texture on warm paper.',
+    category: 'lines',
+    base: CREAM,
+    css: layer(
+      grad(`${fade(CREAM)},
+      repeating-linear-gradient(0deg, rgba(120, 100, 70, 0.05) 0 1px, transparent 1px 3px),
+      repeating-linear-gradient(90deg, rgba(120, 100, 70, 0.05) 0 1px, transparent 1px 3px)`),
+    ),
+    raster: { format: 'png' },
+  },
+  {
+    key: 'soft-stripes',
+    name: 'Soft Stripes',
+    description: 'Wide, very pale vertical bands.',
+    category: 'lines',
+    css: layer(
+      grad(`${fade(WHITE)},
+      repeating-linear-gradient(90deg, rgba(147, 163, 186, 0.11) 0 34px, transparent 34px 68px)`),
+    ),
+    raster: { format: 'png' },
+  },
+  {
+    key: 'diagonal-bands',
+    name: 'Diagonal Bands',
+    description: 'Wide, very pale bands running corner to corner.',
+    category: 'lines',
+    css: layer(
+      grad(`${fade(WHITE)},
+      repeating-linear-gradient(135deg, rgba(147, 163, 186, 0.10) 0 30px, transparent 30px 60px)`),
+    ),
+    raster: { format: 'png' },
+  },
+  {
+    key: 'plaid',
+    name: 'Plaid',
+    description: 'Pale bands crossing both ways.',
+    category: 'geometric',
+    css: layer(
+      grad(`${fade(WHITE)},
+      repeating-linear-gradient(0deg, rgba(147, 163, 186, 0.08) 0 38px, transparent 38px 76px),
+      repeating-linear-gradient(90deg, rgba(147, 163, 186, 0.08) 0 38px, transparent 38px 76px)`),
+    ),
+    raster: { format: 'png' },
+  },
+  {
+    key: 'dot-paper',
+    name: 'Dot Paper',
+    description: 'A dot grid on warm paper, like a designer\'s notepad.',
+    category: 'dots',
+    base: CREAM,
+    css: layer(
+      grad(
+        `${fade(CREAM)},
+      radial-gradient(circle at 3px 3px, rgba(120, 100, 70, 0.34) 1.1px, transparent 1.7px)`,
+        1,
+        '100% 100%, 18px 18px',
+      ),
+    ),
+    raster: { format: 'png' },
+  },
+  {
+    key: 'warm-glow',
+    name: 'Warm Glow',
+    description: 'A soft peach light behind the upper half of the page.',
+    category: 'accent',
+    css: layer(
+      grad(`radial-gradient(62% 42% at 50% 30%, rgba(255, 186, 130, 0.30), rgba(255, 186, 130, 0) 72%)`),
+    ),
+    raster: { format: 'jpeg' },
+  },
+  {
+    key: 'blue-mist',
+    name: 'Blue Mist',
+    description: 'Two cool, pale clouds of blue.',
+    category: 'accent',
+    css: layer(
+      grad(`radial-gradient(52% 34% at 24% 30%, rgba(110, 165, 235, 0.24), rgba(110, 165, 235, 0) 72%),
+      radial-gradient(48% 32% at 78% 66%, rgba(140, 195, 240, 0.20), rgba(140, 195, 240, 0) 72%)`),
+    ),
+    raster: { format: 'jpeg' },
+  },
+  {
+    key: 'pastel-aurora',
+    name: 'Pastel Aurora',
+    description: 'Mint, lilac and peach, each a faint wash.',
+    category: 'accent',
+    css: layer(
+      grad(`radial-gradient(46% 30% at 22% 26%, rgba(120, 214, 180, 0.22), rgba(120, 214, 180, 0) 72%),
+      radial-gradient(46% 30% at 80% 44%, rgba(176, 150, 240, 0.20), rgba(176, 150, 240, 0) 72%),
+      radial-gradient(46% 30% at 40% 74%, rgba(255, 190, 150, 0.20), rgba(255, 190, 150, 0) 72%)`),
+    ),
+    raster: { format: 'jpeg' },
+  },
+
+  // dark -- a dark page with the text switched to light. Made for a file that
+  // is read on a screen: printed, each page is mostly ink.
+  {
+    key: 'dark-charcoal',
+    name: 'Charcoal',
+    description: 'A plain dark grey page with light text.',
+    category: 'dark',
+    css: '',
+    base: CHARCOAL,
+    dark: true,
+  },
+  {
+    key: 'dark-navy',
+    name: 'Midnight Navy',
+    description: 'A plain deep navy page with light text.',
+    category: 'dark',
+    css: '',
+    base: NAVY,
+    dark: true,
+  },
+  {
+    key: 'dark-slate',
+    name: 'Slate',
+    description: 'A plain blue-grey slate page with light text.',
+    category: 'dark',
+    css: '',
+    base: SLATE,
+    dark: true,
+  },
+  {
+    key: 'dark-forest',
+    name: 'Deep Forest',
+    description: 'A plain dark green page with light text.',
+    category: 'dark',
+    css: '',
+    base: '#0f1f1b',
+    dark: true,
+  },
+  {
+    key: 'dark-plum',
+    name: 'Plum',
+    description: 'A plain dark violet page with light text.',
+    category: 'dark',
+    css: '',
+    base: '#1d1526',
+    dark: true,
+  },
+  {
+    key: 'dark-grid',
+    name: 'Dark Grid',
+    description: 'Charcoal with a faint grid. Light text.',
+    category: 'dark',
+    base: CHARCOAL,
+    dark: true,
+    css: layer(
+      grad(`${fade(CHARCOAL)},
+      repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.055) 0 1px, transparent 1px 24px),
+      repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.055) 0 1px, transparent 1px 24px)`),
+    ),
+    raster: { format: 'png' },
+  },
+  {
+    key: 'dark-diagonal',
+    name: 'Dark Diagonal',
+    description: 'Navy with fine diagonal lines. Light text.',
+    category: 'dark',
+    base: NAVY,
+    dark: true,
+    css: layer(
+      grad(`${fade(NAVY)},
+      repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px 14px)`),
+    ),
+    raster: { format: 'png' },
+  },
+  {
+    key: 'dark-dots',
+    name: 'Dark Dots',
+    description: 'Slate with a dot grid. Light text.',
+    category: 'dark',
+    base: SLATE,
+    dark: true,
+    css: layer(
+      grad(
+        `${fade(SLATE)},
+      radial-gradient(circle at 3px 3px, rgba(255, 255, 255, 0.16) 1.1px, transparent 1.7px)`,
+        1,
+        '100% 100%, 20px 20px',
+      ),
+    ),
+    raster: { format: 'png' },
+  },
+  {
+    key: 'dark-carbon',
+    name: 'Carbon',
+    description: 'Near-black with a tight diagonal weave. Light text.',
+    category: 'dark',
+    base: CARBON,
+    dark: true,
+    css: layer(
+      grad(`${fade(CARBON)},
+      repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.035) 0 2px, transparent 2px 6px),
+      repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.035) 0 2px, transparent 2px 6px)`),
+    ),
+    raster: { format: 'png' },
+  },
+  {
+    key: 'dark-glow',
+    name: 'Midnight Glow',
+    description: 'Navy with a soft blue light in the upper half. Light text.',
+    category: 'dark',
+    base: NAVY,
+    dark: true,
+    css: layer(
+      grad(`radial-gradient(66% 42% at 66% 28%, rgba(64, 132, 255, 0.30), rgba(64, 132, 255, 0) 72%)`),
+    ),
+    raster: { format: 'jpeg' },
+  },
+  {
+    key: 'dark-aurora',
+    name: 'Aurora',
+    description: 'Near-black with teal and violet lights. Light text.',
+    category: 'dark',
+    base: NIGHT,
+    dark: true,
+    css: layer(
+      grad(`radial-gradient(50% 32% at 22% 30%, rgba(40, 200, 170, 0.24), rgba(40, 200, 170, 0) 72%),
+      radial-gradient(50% 32% at 80% 58%, rgba(140, 100, 255, 0.24), rgba(140, 100, 255, 0) 72%)`),
+    ),
+    raster: { format: 'jpeg' },
+  },
+  {
+    key: 'dark-ember',
+    name: 'Ember',
+    description: 'Warm near-black with an amber light low on the page. Light text.',
+    category: 'dark',
+    base: EMBER,
+    dark: true,
+    css: layer(
+      grad(`radial-gradient(62% 38% at 62% 70%, rgba(255, 140, 60, 0.22), rgba(255, 140, 60, 0) 72%)`),
+    ),
+    raster: { format: 'jpeg' },
+  },
+  {
+    key: 'dark-contours',
+    name: 'Night Contours',
+    description: 'Charcoal with pale contour lines. Light text.',
+    category: 'dark',
+    base: CHARCOAL,
+    dark: true,
+    // Plain strokes, so it stays vector: nothing here that a viewer can get wrong.
+    css: layer(full(recolour(TOPOGRAPHY, '#a9bbd6'), 0.8)),
+  },
+  {
+    key: 'dark-constellation',
+    name: 'Constellation',
+    description: 'Navy with a small network of points and lines. Light text.',
+    category: 'dark',
+    base: NAVY,
+    dark: true,
+    // Set in from the corner, not hung off it: the layer ends where the page
+    // margin begins, and a drawing that ran past that edge would be cut off.
+    css: layer(corner(recolour(PARTICLE_DOTS, '#8ea8d0', '#b9cdee'), '18px 26px', 380, 380, 0.55)),
   },
 ] as const;
 
@@ -483,19 +953,38 @@ export function getBackground(key: string | null | undefined): BackgroundDef {
 }
 
 /**
- * The CSS to render with -- the pre-rendered PNG where one exists.
+ * The CSS a document is rendered with.
  *
- * The registry keeps the VECTOR definition as the source of truth, because
- * that is what `gen-raster.ts` re-renders from and what stays editable. The
- * swap happens here, at the last moment, so exactly one thing changes: which
- * image the layer points at.
+ * Assembled here, at the last moment, from four independent parts: the page
+ * colour, the light-text switch, and the pattern either as its pre-rendered
+ * image or, for the plain vector drawings, as it was written.
  *
- * Only the patterns too dense to draw as vectors have a raster. The rest go
- * out as gradients or small SVGs, which are both sharper and smaller.
+ * The image replaces the WHOLE layer, not just the picture inside it. The
+ * image is captured with the layer's opacity and its fade already applied, so
+ * keeping the original declaration around it would apply the opacity twice.
+ * (It once did. The odd opacities on the older patterns, 0.5625 and the like,
+ * are the squares that kept their appearance when that was put right.)
+ *
+ * A background marked `raster` with no image yet falls back to its source CSS.
+ * That still renders, and still carries the viewer problem rule 4 describes,
+ * so gen-raster.ts is what makes this path unreachable in practice.
  */
 export function backgroundCss(key: string | null | undefined): string {
   const def = getBackground(key);
-  const png = RASTER[def.key];
-  if (!png) return def.css;
-  return def.css.replace(/url\("data:image\/svg\+xml,[^"]*"\)/, `url("${png}")`);
+  const parts: string[] = [];
+  if (def.base) parts.push(pageColour(def.base));
+  if (def.dark) parts.push(LIGHT_TEXT);
+
+  const image = def.raster ? RASTER[def.key] : undefined;
+  if (image) {
+    parts.push(
+      layer(`background-image: url("${image}");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 100% 100%;`),
+    );
+  } else if (def.css) {
+    parts.push(def.css);
+  }
+  return parts.join('\n');
 }
