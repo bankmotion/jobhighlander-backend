@@ -15,8 +15,9 @@ import { splitContact } from '../contact';
  *    the impact sentence, and only then the bullets. The other layouts print
  *    impact last under an "Impact:" label; here it is the first thing read
  *    about the role, which is the point of this layout.
- *  - Skills come last, as one bulleted line per category. By then the reader
- *    has seen them used, so the list confirms rather than introduces.
+ *  - Each role closes with the skills it used, and the full list comes last, as
+ *    one bulleted line per category. By then the reader has seen them used, so
+ *    the list confirms rather than introduces.
  *
  * Single column, no tables, no icons: extraction reads it top to bottom in the
  * order it is printed, so presets on this layout may set atsSafe.
@@ -63,6 +64,13 @@ export function CenteredLayout({ resume, name, contact }: TemplateProps) {
                     <li key={j}><Rich text={b.text} /></li>
                   ))}
                 </ul>
+              )}
+              {/* Absent on a resume written before the field existed, so the
+                  line is simply not printed rather than printed empty. */}
+              {(e.skills ?? []).length > 0 && (
+                <p className="role-skills">
+                  <strong>Skills:</strong> {(e.skills ?? []).join(', ')}
+                </p>
               )}
             </article>
           ))}
@@ -205,6 +213,9 @@ export const CENTERED_CSS = `
   /* Body size and colour, unlike the other layouts' impact line. There it is a
      footnote to the bullets; here it is the role's opening statement. */
   .impact { margin: 1px 0 0; }
+
+  /* Closes the role: what the bullets above were built with. */
+  .role-skills { margin: 1px 0 0; break-before: avoid; page-break-before: avoid; }
 
   .degree { margin: 1px 0 0; }
   .edu { margin-bottom: 2px; }

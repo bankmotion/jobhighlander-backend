@@ -418,6 +418,18 @@ function centeredBody(ctx: Ctx, r: TailoredResume, name: string, contact: string
         );
       }
       e.bullets.forEach((b) => out.push(bullet(ctx, b.text)));
+      const roleSkills = e.skills ?? [];
+      if (roleSkills.length) {
+        out.push(
+          new Paragraph({
+            spacing: { before: px(1), after: 0, line },
+            children: [
+              new TextRun({ text: 'Skills: ', bold: true, font: ctx.fonts.body, size }),
+              new TextRun({ text: roleSkills.join(', '), font: ctx.fonts.body, size }),
+            ],
+          }),
+        );
+      }
     });
   }
 

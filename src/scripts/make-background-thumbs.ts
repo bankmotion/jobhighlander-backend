@@ -45,6 +45,7 @@ const SAMPLE: TailoredResume = {
       company: 'Northwind Systems', period: 'Mar 2021 – Present', location: 'Remote',
       title: 'Senior Backend Engineer', titleInferred: false,
       impact: '',
+      skills: ['Go', 'Kafka', 'PostgreSQL', 'Kubernetes', 'gRPC'],
       bullets: [
         'Led the migration of the billing service off a shared monolith, cutting p99 latency from 1.8s to 240ms.',
         'Designed the event pipeline now carrying 40M messages a day with at-least-once delivery guarantees.',
@@ -55,6 +56,7 @@ const SAMPLE: TailoredResume = {
       company: 'Vertex Labs', period: 'Jun 2018 – Feb 2021', location: 'Austin, TX',
       title: 'Backend Engineer', titleInferred: false,
       impact: '',
+      skills: ['Go', 'AWS', 'Terraform', 'REST APIs'],
       bullets: [
         'Built the public API used by 300+ integration partners, including versioning and deprecation policy.',
         'Reduced infrastructure spend 34% by right-sizing workloads and moving batch jobs to spot capacity.',

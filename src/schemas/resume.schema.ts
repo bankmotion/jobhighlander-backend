@@ -18,11 +18,11 @@ const bullet = z4.object({
   text: z4
     .string()
     .describe(
-      'One achievement. Open with an action verb wrapped in <b> tags, and wrap ' +
-        'the technologies and metrics that matter in <b> too. THE HOUSE STYLE ' +
-        'ADDENDUM MAY OVERRIDE THIS EMPHASIS: when it asks for less bold, or ' +
-        'for the opening verb left plain, follow it. <b> is the ONLY tag ' +
-        'allowed anywhere; any other markup is printed literally.',
+      'One achievement. Open with an action verb, left plain. Wrap in <b> ' +
+        'tags the name of the project, the technologies and the metrics that ' +
+        'matter. THE HOUSE STYLE ADDENDUM MAY OVERRIDE THIS EMPHASIS: when it ' +
+        'asks for more or less bold, follow it. <b> is the ONLY tag allowed ' +
+        'anywhere; any other markup is printed literally.',
     ),
   inferred: z4.boolean().describe(INFERRED),
 });
@@ -51,6 +51,12 @@ const experienceEntry = z4.object({
         'A field description outranks the ' +
         'system prompt when the two disagree, so this is the number that decides ' +
         'the length of the resume.',
+    ),
+  skills: z4
+    .array(z4.string())
+    .describe(
+      'Every technology and skill this role actually uses in its bullets, the ' +
+        'ones the posting asks for first. Plain names, no markup, no sentences.',
     ),
   impact: z4
     .string()
@@ -111,3 +117,44 @@ export const tailoredResumeSchema = z4.object({
 });
 
 export type TailoredResume = z4.infer<typeof tailoredResumeSchema>;
+
+/**
+ * Bring a resume saved under an earlier shape up to the current one.
+ *
+ * Fields have been added to the draft over time, and a field the model must
+ * now produce cannot be optional in `tailoredResumeSchema`: that schema is sent
+ * to the provider as the output format, where every key is required. So the
+ * leniency lives here, on the way IN from storage, and nowhere else.
+ *
+ * Each default is the value that renders as "this role has none", never an
+ * invention: an empty list of skills, an empty impact line, an uncategorised
+ * skill, an education entry with no location. A resume written before a field
+ * existed opens exactly as it looked then.
+ */
+function withCurrentShape(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value;
+  const doc = value as Record<string, unknown>;
+  const each = (list: unknown, fix: (item: Record<string, unknown>) => Record<string, unknown>) =>
+    Array.isArray(list)
+      ? list.map((item) => (item && typeof item === 'object' ? fix(item as Record<string, unknown>) : item))
+      : list;
+  return {
+    ...doc,
+    skills: each(doc.skills, (s) => ({ ...s, category: s.category ?? '' })),
+    experience: each(doc.experience, (e) => ({
+      ...e,
+      skills: e.skills ?? [],
+      impact: e.impact ?? '',
+    })),
+    education: each(doc.education, (ed) => ({ ...ed, location: ed.location ?? '' })),
+  };
+}
+
+/**
+ * What a route validates a SAVED or POSTED resume against.
+ *
+ * Same document as `tailoredResumeSchema`, which stays the strict contract for
+ * what the model returns. This one only adds the step above, so a resume from
+ * last month and one from today go through the same renderer.
+ */
+export const storedResumeSchema = z4.preprocess(withCurrentShape, tailoredResumeSchema);

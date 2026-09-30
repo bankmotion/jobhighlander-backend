@@ -89,8 +89,13 @@ stated in full: past ${yearsToState} years the documents say "${yearsToState}+ y
 longer. Write exactly that in the summary, in digits with a trailing plus, which
 is the one place a plus sign belongs. Do not recompute it.`
         : `State it in
-the summary in digits with a trailing plus ("10+ years"), which is the one place
+the summary as "${yearsToState}+ years", in digits with a trailing plus, which is the one place
 a plus sign belongs. Do not recompute it and do not round it up.`;
+    // The phrase is spelled out with THIS candidate's figure. It used to give a
+    // fixed example, "10+ years", and the model sometimes copied the example:
+    // the rewrite below put the summary right, but the review note it had
+    // already written ("replace the summary's 10+ years") stayed, pointing at a
+    // number that was no longer on the page.
 
     const employment = profile.workExperiences
       .map((w) => `- ${w.company ?? '(company not recorded)'}${w.location ? `, ${w.location}` : ''} — ${periodOf(w.startDate, w.endDate)}`)
@@ -122,8 +127,13 @@ Contact: ${contact || '(not recorded)'}
 Employment history — employers and dates are FIXED FACTS, never alter them:
 ${employment || '(none recorded)'}
 
-Total years of work: ${yearsOfWork || '(not derivable)'}
-This figure is computed from the dates above and is a FIXED FACT. ${yearsInstruction}
+${
+  yearsOfWork
+    ? `Total years of work: ${yearsOfWork}
+This figure is computed from the dates above and is a FIXED FACT. ${yearsInstruction}`
+    : `Total years of work: not derivable from the dates above. State no number of
+years of experience anywhere.`
+}
 
 Education — fixed facts:
 ${education || '(none recorded)'}

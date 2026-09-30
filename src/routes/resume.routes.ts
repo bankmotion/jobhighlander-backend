@@ -6,7 +6,7 @@ import { previewRequestSchema } from '../schemas/resume.schema';
 import { resumeService, ResumeInputError, profileIdentity } from '../services/resume.service';
 import { generationService } from '../services/generation.service';
 import { prisma } from '../lib/prisma';
-import { tailoredResumeSchema } from '../schemas/resume.schema';
+import { storedResumeSchema } from '../schemas/resume.schema';
 import { renderResumeHtml } from '../resume/render';
 import { BACKGROUNDS, isBackground, DEFAULT_BACKGROUND } from '../resume/backgrounds';
 import { htmlToPdf } from '../resume/pdf';
@@ -180,7 +180,7 @@ resumeRouter.post('/docx', requireAuth, async (req: AuthedRequest, res: Response
     if (!parsed.success) {
       return res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
     }
-    const resume = tailoredResumeSchema.safeParse(parsed.data.resume);
+    const resume = storedResumeSchema.safeParse(parsed.data.resume);
     if (!resume.success) {
       return res.status(400).json({ error: 'Resume does not match the expected shape' });
     }
@@ -227,7 +227,7 @@ resumeRouter.post('/pdf', requireAuth, async (req: AuthedRequest, res: Response,
 
     // The resume itself is validated against the generation schema, so a
     // hand-rolled or stale object fails here rather than rendering a broken PDF.
-    const resume = tailoredResumeSchema.safeParse(parsed.data.resume);
+    const resume = storedResumeSchema.safeParse(parsed.data.resume);
     if (!resume.success) {
       return res.status(400).json({ error: 'Resume does not match the expected shape' });
     }
