@@ -46,8 +46,9 @@ const experienceEntry = z4.object({
   bullets: z4
     .array(bullet)
     .describe(
-      'Achievements, most relevant to this posting first. 8 to 10 for the most ' +
-        'recent role, 6 to 8 for older ones. A field description outranks the ' +
+      'Achievements, most relevant to this posting first. 9 or more for the ' +
+        'most recent role, 6 to 8 for every other role, never fewer than 6. ' +
+        'A field description outranks the ' +
         'system prompt when the two disagree, so this is the number that decides ' +
         'the length of the resume.',
     ),
@@ -68,13 +69,21 @@ const educationEntry = z4.object({
 });
 
 export const tailoredResumeSchema = z4.object({
-  headline: z4.string().describe('Target-role headline, e.g. "Senior Data Engineer · Python · Spark · AWS".'),
+  headline: z4
+    .string()
+    .describe(
+      'The professional title alone, at most 90 characters. NO technologies: ' +
+        'the stack belongs in the skills and the bullets, and a headline packed ' +
+        'with it reads as keyword padding. e.g. "Senior Platform and ' +
+        'Infrastructure Engineer".',
+    ),
   summary: z4
     .string()
     .describe(
-      '4 to 5 sentences aimed at THIS posting: seniority and discipline, the ' +
+      '3 to 4 sentences aimed at THIS posting: seniority and discipline, the ' +
         'years the employment dates actually support, the technologies the ' +
-        'posting names, one measurable outcome, and one sentence on ownership. ' +
+        'posting names, one measurable outcome, and a close on alignment with ' +
+        'the role and the company. No personal pronouns. ' +
         'Wrap 10 to 15 of the highest-value terms in <b> tags, unless the house ' +
         'style addendum asks for a different density — that count overrides ' +
         'this one.',

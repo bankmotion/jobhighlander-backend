@@ -5,7 +5,7 @@ import { logger } from './logger.service';
 import { promptService } from './prompt.service';
 import { aiUsageService } from './aiUsage.service';
 import { billingService } from './billing.service';
-import { ResumeInputError, periodOf, yearsOf, yearsOfWorkFrom } from './resume.service';
+import { ResumeInputError, periodOf, yearsOf, yearsOfWorkFrom, statedYears } from './resume.service';
 import {
   promptCheckSchema,
   sanitizeCustomPrompt,
@@ -232,13 +232,20 @@ export const profilePromptService = {
       .map((e) => '- ' + [e.degree, e.university].filter(Boolean).join(', ') + ' — ' +
         (e.datePrecision === 'year' ? yearsOf(e.startDate, e.endDate) : periodOf(e.startDate, e.endDate)))
       .join('\n');
+    const years = yearsOfWorkFrom(profile.workExperiences);
     const record = [
       'THE CANDIDATE RECORD THIS ADDENDUM WILL BE APPLIED TO',
       '',
       'Employment history:',
       employment || '(none recorded)',
       '',
-      'Total years of work: ' + (yearsOfWorkFrom(profile.workExperiences) || '(not derivable)'),
+      'Total years of work: ' + (years || '(not derivable)') +
+        // Past the cap the generator writes a different figure than the dates
+        // give. Said here so the reviewer judges an addendum against what a
+        // resume will actually state.
+        (years > statedYears(years)
+          ? ` (every document states this as "${statedYears(years)}+ years", never the full figure)`
+          : ''),
       '',
       'Education:',
       education || '(none recorded)',

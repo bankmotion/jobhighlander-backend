@@ -12,6 +12,7 @@ import {
   periodOf,
   yearsOf,
   yearsOfWorkFrom,
+  statedYears,
   profileIdentity,
 } from './resume.service';
 import { assembleLetter, coverLetterService, type StoredCoverLetter } from './coverLetter.service';
@@ -76,6 +77,20 @@ export const generationService = {
     const { name, contact } = profileIdentity(profile);
 
     const yearsOfWork = yearsOfWorkFrom(profile.workExperiences);
+    // What the documents SAY, as opposed to what the dates support. The two
+    // differ only past the cap. The instruction below and the rewrite after the
+    // call both use this one figure: were they to disagree, the model would be
+    // told one number and corrected to another on every run.
+    const yearsToState = statedYears(yearsOfWork);
+    const yearsInstruction =
+      yearsOfWork > yearsToState
+        ? `It is never
+stated in full: past ${yearsToState} years the documents say "${yearsToState}+ years" and nothing
+longer. Write exactly that in the summary, in digits with a trailing plus, which
+is the one place a plus sign belongs. Do not recompute it.`
+        : `State it in
+the summary in digits with a trailing plus ("10+ years"), which is the one place
+a plus sign belongs. Do not recompute it and do not round it up.`;
 
     const employment = profile.workExperiences
       .map((w) => `- ${w.company ?? '(company not recorded)'}${w.location ? `, ${w.location}` : ''} — ${periodOf(w.startDate, w.endDate)}`)
@@ -108,9 +123,7 @@ Employment history — employers and dates are FIXED FACTS, never alter them:
 ${employment || '(none recorded)'}
 
 Total years of work: ${yearsOfWork || '(not derivable)'}
-This figure is computed from the dates above and is a FIXED FACT. State it in
-the summary in digits with a trailing plus ("10+ years"), which is the one place
-a plus sign belongs. Do not recompute it and do not round it up.
+This figure is computed from the dates above and is a FIXED FACT. ${yearsInstruction}
 
 Education — fixed facts:
 ${education || '(none recorded)'}
@@ -168,16 +181,17 @@ Produce the tailored resume and the cover letter paragraphs now.`;
     // The prompt asks for this and the model mostly complies; this is what makes
     // it certain, and it runs before BOTH documents so the two cannot disagree.
     const { resume } = sanitizeResume(call.output);
-    // The prompt asks for the computed figure; this is what makes it certain.
+    // The candidate block asks for this figure (capped for a long career, see
+    // `statedYears`); this is what makes it certain.
     // Applied to the summary alone, because that is the one sentence that states
     // the career span — a "five years" inside a bullet is describing something
     // else. Logged when it actually changes the text: a model overstating the
     // span is worth seeing in the logs, not silently repaired every time.
     const claimedSummary = resume.summary;
-    resume.summary = writeExperienceYears(resume.summary, yearsOfWork);
+    resume.summary = writeExperienceYears(resume.summary, yearsToState);
     if (claimedSummary !== resume.summary) {
       logger.warn('Rewrote the years-of-experience claim', {
-        profileId, jobId, yearsOfWork,
+        profileId, jobId, yearsOfWork, yearsToState,
       });
     }
     // The letter goes through a STRICTER pass: it is pasted into an email as

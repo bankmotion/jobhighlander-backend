@@ -52,6 +52,26 @@ export function yearsOfWorkFrom(
   return Math.floor((latest - earliest) / (365.25 * 24 * 60 * 60 * 1000));
 }
 
+/**
+ * The most years a document ever states. A longer career reads "8+ years".
+ *
+ * A cap on what is SAID, not on what is computed: `yearsOfWorkFrom` still
+ * returns the true span, and seniority is still inferred from the real dates.
+ * It lives in code rather than in the application prompt because the prompt
+ * cannot enforce it. The generator states the years to the model as a fixed
+ * fact and rewrites the summary to that figure afterwards, so a cap written
+ * only in the prompt would be overruled on every run.
+ *
+ * It can only lower the stated figure, never raise it, so it cannot reopen the
+ * overstatement that rewrite exists to stop.
+ */
+export const MAX_STATED_YEARS = 8;
+
+/** The figure a document states for a career of `years`: the true one, capped. */
+export function statedYears(years: number): number {
+  return Math.min(years, MAX_STATED_YEARS);
+}
+
 export function yearsOf(start: Date | null, end: Date | null): string {
   if (!start && !end) return '';
   const y = (d: Date) => String(d.getUTCFullYear());
