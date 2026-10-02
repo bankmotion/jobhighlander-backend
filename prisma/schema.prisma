@@ -1397,8 +1397,33 @@ model JobAiQuery {
 
   createdAt DateTime @default(now()) @map("created_at")
 
+  /// Screenshots pasted into the question, in the order they were pasted.
+  attachments JobAiQueryAttachment[]
+
   /// The log reads one pairing newest-first; this is the whole query.
   @@index([profileId, jobId, createdAt])
   @@index([jobId])
   @@map("job_ai_queries")
+}
+
+/// A screenshot pasted into an Ask AI question (Ctrl+V in the panel).
+///
+/// Kept with its question so the log can show what was asked about. Shrunk in
+/// the browser before upload; the backend caps each at 2 MB and three per
+/// question. Removed with the question.
+model JobAiQueryAttachment {
+  id Int @id @default(autoincrement())
+
+  queryId Int        @map("query_id")
+  query   JobAiQuery @relation(fields: [queryId], references: [id], onDelete: Cascade)
+
+  /// 0-based order within the question.
+  position  Int
+  mediaType String   @map("media_type") @db.VarChar(32)
+  bytes     Int
+  data      Bytes    @db.MediumBlob
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([queryId])
+  @@map("job_ai_query_attachments")
 }

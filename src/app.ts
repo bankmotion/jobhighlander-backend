@@ -32,6 +32,10 @@ export function createApp(): Application {
   const app = express();
 
   app.use(cors({ origin: env.CORS_ORIGIN }));
+  // Ask AI questions can carry up to three pasted screenshots, well past the
+  // 100 KB default. Raised for that route alone and registered first: the body
+  // parser marks a request as parsed, so the default one below then skips it.
+  app.use('/api/job-queries', express.json({ limit: '10mb' }));
   app.use(express.json());
 
   app.get('/health', (_req: Request, res: Response) => {

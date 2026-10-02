@@ -5,6 +5,12 @@ import { ResumeInputError } from '../services/resume.service';
 import { MissingPromptError } from '../services/prompt.service';
 import { AI_PROVIDERS, aiEnabled } from '../lib/ai';
 import { requireAuth, type AuthedRequest } from '../middleware/auth.middleware';
+import {
+  MAX_IMAGES,
+  MAX_IMAGE_DATA_URL_CHARS,
+  decodeImageDataUrl,
+  type DecodedImage,
+} from '../lib/imageDataUrl';
 
 export const jobQueryRouter = Router();
 
@@ -37,10 +43,19 @@ jobQueryRouter.post('/', requireAuth, async (req: AuthedRequest, res: Response, 
       .object({
         jobId: idParam,
         profileId: idParam,
-        question: z.string().trim().min(1).max(QUESTION_MAX_CHARS),
+        // May be empty when a screenshot carries the question.
+        question: z.string().trim().max(QUESTION_MAX_CHARS).default(''),
         // Optional: a client that never learned about providers still asks
         // questions, and the server falls back to its configured default.
         provider: z.enum(AI_PROVIDERS).optional(),
+        // Pasted screenshots, as data URLs. Decoded and checked below.
+        images: z
+          .array(z.string().max(MAX_IMAGE_DATA_URL_CHARS, 'A screenshot is too large (2 MB at most)'))
+          .max(MAX_IMAGES, `At most ${MAX_IMAGES} screenshots per question`)
+          .default([]),
+      })
+      .refine((b) => b.question.length > 0 || b.images.length > 0, {
+        message: 'Ask a question or paste a screenshot first',
       })
       .safeParse(req.body);
     if (!parsed.success) {
@@ -49,7 +64,13 @@ jobQueryRouter.post('/', requireAuth, async (req: AuthedRequest, res: Response, 
       });
     }
     const { jobId, profileId, question, provider } = parsed.data;
-    res.json(await jobQueryService.ask(jobId, profileId, question, req.user!.id, provider));
+    const images: DecodedImage[] = [];
+    for (const value of parsed.data.images) {
+      const img = decodeImageDataUrl(value);
+      if (typeof img === 'string') return res.status(400).json({ error: img });
+      images.push(img);
+    }
+    res.json(await jobQueryService.ask(jobId, profileId, question, req.user!.id, provider, images));
   } catch (err) {
     failure(err, res, next);
   }
@@ -82,6 +103,23 @@ jobQueryRouter.get('/counts', requireAuth, async (req: AuthedRequest, res: Respo
     if (!parsed.success) return res.status(400).json({ error: 'Invalid query' });
     const { profileId, jobIds } = parsed.data;
     res.json(await jobQueryService.countsFor(jobIds, profileId, req.user!.id));
+  } catch (err) {
+    failure(err, res, next);
+  }
+});
+
+// A stored screenshot. Same gate as the log: only someone who may use the
+// profile it was asked on.
+jobQueryRouter.get('/attachments/:id', requireAuth, async (req: AuthedRequest, res: Response, next: NextFunction) => {
+  try {
+    const id = idParam.safeParse(req.params.id);
+    if (!id.success) return res.status(400).json({ error: 'Invalid id' });
+    const found = await jobQueryService.attachment(id.data, req.user!.id);
+    if (!found) return res.status(404).json({ error: 'Not found' });
+    res.setHeader('Content-Type', found.mediaType);
+    // Never changes once stored, and is only ever someone's own data.
+    res.setHeader('Cache-Control', 'private, max-age=604800, immutable');
+    res.send(Buffer.from(found.data));
   } catch (err) {
     failure(err, res, next);
   }

@@ -105,6 +105,18 @@ function jsonSchemaOf(schema: z4.ZodType): Record<string, unknown> {
   return closeObjects(raw) as Record<string, unknown>;
 }
 
+/** One earlier question and its answer, replayed as conversation turns. */
+export interface PriorTurn {
+  question: string;
+  answer: string;
+}
+
+/** An image sent with the question: its media type and base64 bytes. */
+export interface CallImage {
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  base64: string;
+}
+
 export interface CallInput {
   provider: AiProvider;
   /**
@@ -223,9 +235,24 @@ export async function structuredCall<S extends z4.ZodType>(
   return { output: parsed.data, usage: openAiUsage(res.usage), model };
 }
 
-/** Prose, not a schema — the "Ask AI about a job" answer a person reads. */
-export async function textCall(input: CallInput): Promise<AiResult<string>> {
+/**
+ * Prose, not a schema — the "Ask AI about a job" answer a person reads.
+ *
+ * `history` replays earlier questions about the same posting as alternating
+ * user / assistant turns, oldest first, so a follow-up ("shorter", "and the
+ * second point?") has something to follow. It goes AFTER the system blocks,
+ * which keeps those blocks the cached prefix on both providers.
+ *
+ * `images` are attached to the new question only. Earlier screenshots are not
+ * re-sent with each follow-up: the answer they produced is in the history, and
+ * re-sending every image would multiply the cost of a long thread.
+ */
+export async function textCall(
+  input: CallInput & { history?: PriorTurn[]; images?: CallImage[] },
+): Promise<AiResult<string>> {
   const { provider, system, user, maxTokens, cacheSystem } = input;
+  const history = input.history ?? [];
+  const images = input.images ?? [];
   const model = PROVIDER_MODEL[provider];
 
   if (provider === 'claude') {
@@ -239,7 +266,24 @@ export async function textCall(input: CallInput): Promise<AiResult<string>> {
         //
         // No `effort`: Haiku 4.5 rejects it with a 400.
         system: systemBlocks(system, cacheSystem === true),
-        messages: [{ role: 'user', content: user }],
+        messages: [
+          ...history.flatMap((h) => [
+            { role: 'user' as const, content: h.question },
+            { role: 'assistant' as const, content: h.answer },
+          ]),
+          {
+            role: 'user' as const,
+            content: images.length
+              ? [
+                  ...images.map((img) => ({
+                    type: 'image' as const,
+                    source: { type: 'base64' as const, media_type: img.mediaType, data: img.base64 },
+                  })),
+                  { type: 'text' as const, text: user },
+                ]
+              : user,
+          },
+        ],
       })
       .catch((err) => mapProviderError(provider, err));
 
@@ -265,7 +309,25 @@ export async function textCall(input: CallInput): Promise<AiResult<string>> {
       max_output_tokens: maxTokens,
       reasoning: { effort: OPENAI_EFFORT },
       instructions: system.join('\n\n'),
-      input: [{ role: 'user', content: user }],
+      input: [
+        ...history.flatMap((h) => [
+          { role: 'user' as const, content: h.question },
+          { role: 'assistant' as const, content: h.answer },
+        ]),
+        {
+          role: 'user' as const,
+          content: images.length
+            ? [
+                ...images.map((img) => ({
+                  type: 'input_image' as const,
+                  image_url: `data:${img.mediaType};base64,${img.base64}`,
+                  detail: 'auto' as const,
+                })),
+                { type: 'input_text' as const, text: user },
+              ]
+            : user,
+        },
+      ],
     })
     .catch((err) => mapProviderError(provider, err));
 

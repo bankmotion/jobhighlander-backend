@@ -8,12 +8,21 @@ import { usableProfileWhere } from './profile.service';
 import { billingService } from './billing.service';
 import { periodOf, yearsOf, profileIdentity, ResumeInputError } from './resume.service';
 import type { TailoredResume } from '../schemas/resume.schema';
+import type { DecodedImage } from '../lib/imageDataUrl';
 
 export type QueryContext = {
   profile: boolean;
   resume: boolean;
   coverLetter: boolean;
+  /** How many earlier questions on this posting were replayed with this one. */
+  earlier: number;
 };
+
+/** A screenshot stored with a question: enough for the log to fetch it. */
+export interface QueryAttachment {
+  id: number;
+  mediaType: string;
+}
 
 export interface JobQueryRow {
   id: number;
@@ -27,11 +36,26 @@ export interface JobQueryRow {
   provider: AiProvider | null;
   providerLabel: string;
   context: QueryContext;
+  attachments: QueryAttachment[];
   askedBy: string;
   createdAt: Date;
 }
 
 const JOB_DESCRIPTION_LIMIT = 24_000;
+
+/**
+ * Earlier questions on the same posting replayed with each new one, so a
+ * follow-up can refer back. Five covers a working session; the window slides,
+ * so a long log does not grow every call without bound.
+ */
+const HISTORY_TURNS = 5;
+
+/** Each replayed answer is cut to this. A full 3,000-token answer five times over
+ *  would cost more than the question it serves. */
+const HISTORY_ANSWER_CHARS = 4_000;
+
+/** Stands in for the question when someone pastes a screenshot and types nothing. */
+export const SCREENSHOT_ONLY_QUESTION = 'Answer the question in the attached screenshot.';
 
 const MAX_ANSWER_TOKENS = 3_000;
 
@@ -46,6 +70,7 @@ const rowSelect = {
   context: true,
   createdAt: true,
   askedBy: { select: { email: true } },
+  attachments: { select: { id: true, mediaType: true }, orderBy: { position: 'asc' } },
 } as const;
 
 type RawRow = {
@@ -59,6 +84,7 @@ type RawRow = {
   context: unknown;
   createdAt: Date;
   askedBy: { email: string };
+  attachments: QueryAttachment[];
 };
 
 function shape(r: RawRow): JobQueryRow {
@@ -77,7 +103,10 @@ function shape(r: RawRow): JobQueryRow {
       profile: Boolean(c.profile),
       resume: Boolean(c.resume),
       coverLetter: Boolean(c.coverLetter),
+      // Absent on questions asked before replay existed, which saw none.
+      earlier: Number(c.earlier) || 0,
     },
+    attachments: r.attachments,
     askedBy: r.askedBy.email,
     createdAt: r.createdAt,
   };
@@ -90,15 +119,16 @@ export const jobQueryService = {
     questionRaw: string,
     userId: number,
     provider?: AiProvider,
+    images: DecodedImage[] = [],
   ): Promise<JobQueryRow> {
-    const question = questionRaw.trim();
+    const question = questionRaw.trim() || (images.length ? SCREENSHOT_ONLY_QUESTION : '');
     if (!question) throw new ResumeInputError('Ask a question first', 400);
 
     // Resolved before the reads, same as generation: an unusable provider is a
     // configuration answer, not something to discover after four queries.
     const chosen = resolveProvider(provider);
 
-    const [job, profile, resume, coverLetter] = await Promise.all([
+    const [job, profile, resume, coverLetter, prior] = await Promise.all([
       prisma.job.findUnique({
         where: { id: jobId },
         select: { id: true, title: true, company: true, location: true, description: true },
@@ -117,6 +147,14 @@ export const jobQueryService = {
       prisma.coverLetter.findUnique({
         where: { profileId_jobId: { profileId, jobId } },
         select: { body: true },
+      }),
+      // The conversation so far on this posting, for this profile: the same
+      // log the panel shows, so what the AI remembers is what the reader sees.
+      prisma.jobAiQuery.findMany({
+        where: { profileId, jobId },
+        orderBy: { createdAt: 'desc' },
+        take: HISTORY_TURNS,
+        select: { question: true, answer: true, _count: { select: { attachments: true } } },
       }),
     ]);
 
@@ -144,7 +182,21 @@ export const jobQueryService = {
       profile: true,
       resume: Boolean(resume),
       coverLetter: Boolean(coverLetter),
+      earlier: prior.length,
     };
+
+    // Oldest first, as a conversation reads. An earlier screenshot is named
+    // rather than re-sent: its answer already says what it showed.
+    const history = prior.reverse().map((p) => ({
+      question:
+        p._count.attachments > 0
+          ? `${p.question}\n\n[${p._count.attachments} screenshot${p._count.attachments === 1 ? ' was' : 's were'} attached to this question]`
+          : p.question,
+      answer:
+        p.answer.length > HISTORY_ANSWER_CHARS
+          ? `${p.answer.slice(0, HISTORY_ANSWER_CHARS)}…`
+          : p.answer,
+    }));
 
     const { name, contact } = profileIdentity(profile);
 
@@ -214,7 +266,9 @@ ${job.description.slice(0, JOB_DESCRIPTION_LIMIT)}
     const call = await textCall({
       provider: chosen,
       system: [await promptService.text('job.query.system'), contextBlock],
+      history,
       user: question,
+      images: images.map((img) => ({ mediaType: img.mediaType, base64: img.data.toString('base64') })),
       maxTokens: MAX_ANSWER_TOKENS,
       cacheSystem: true,
     }).catch((err) => {
@@ -250,6 +304,16 @@ ${job.description.slice(0, JOB_DESCRIPTION_LIMIT)}
         model: call.model,
         context,
         askedById: userId,
+        attachments: {
+          create: images.map((img, position) => ({
+            position,
+            mediaType: img.mediaType,
+            bytes: img.data.length,
+            // A copy as a plain Uint8Array: Prisma's Bytes type does not take a
+            // Node Buffer, whose backing store may be shared.
+            data: new Uint8Array(img.data),
+          })),
+        },
       },
       select: rowSelect,
     });
@@ -295,6 +359,14 @@ ${job.description.slice(0, JOB_DESCRIPTION_LIMIT)}
       out[r.jobId] = r._count._all;
     }
     return out;
+  },
+
+  /** One stored screenshot, if the caller may use the profile it was asked on. */
+  async attachment(id: number, userId: number) {
+    return prisma.jobAiQueryAttachment.findFirst({
+      where: { id, query: { profile: usableProfileWhere(userId) } },
+      select: { mediaType: true, data: true },
+    });
   },
 
   async remove(id: number, userId: number): Promise<boolean> {
